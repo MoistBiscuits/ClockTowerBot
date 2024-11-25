@@ -7,6 +7,7 @@ from discord.ext import commands   # Import the discord.py extension "commands"
 from discord import Interaction, app_commands
 from discord.utils import get
 from dotenv import load_dotenv
+from interactions import interaction
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -26,15 +27,17 @@ class Role(Enum): # Roles that are used to determine which channels players can 
     
 class GameState: #Class the holds the users set for the game
     def __init__(self):
-        self.storyteller = NULL #User who is the storyteller
+        self.storyteller = NULL #Meber who is the storyteller
         self.players = [] #List of players in the game
         self.active = False #Whever the game is running or not
 
     def __str__(self) -> str:
         return f"Storyteller: {self.storyteller} \n Players: {self.players} \n Acive?: {self.active}"
 
-    def setStoryTeller(user: discord.abc.User):
-        self.storyteller = user
+    def setStoryTeller(self,member: discord.Member):
+        self.storyteller = member
+        
+gameState = GameState() # public game state
         
 @bot.event
 async def on_ready(): #On bot startup
@@ -85,6 +88,34 @@ async def setupRoles(interaction: discord.Interaction): # create roles used by t
 async def setupChannels(interaction: discord.Interaction): # create the voice channels the bot will use
      await interaction.guild.create_voice_channel(name="Town square")
      await interaction.response.send_message("Initialised Channels")
+     
+@bot.tree.command(
+    name="set_story_teller",
+    description="set which user is the story teller for the next game",
+)
+@app_commands.describe(member="The member to make the story teller")
+async def setStoryTeller(interaction: discord.Interaction, member: discord.Member): # Set who is the storyteller for a unactive game
+    if (gameState.active):
+        await interaction.response.send_message("You cannot change the storyteller during an active game")
+    else:
+        print(member)
+        try: #Roles might not exist
+            storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
+            if (gameState.storyteller != NULL): #If there was a previous storyteller, remove their role
+                await gameState.storyteller.remove_roles(storyRole)
+            await member.add_roles(storyRole)
+            gameState.setStoryTeller(member)
+            await interaction.response.send_message(f"{member} is now the storyteller")
+        except Exception as e:
+            print("Exception has occured while swappign storyteller:",e)
+            await interaction.response.send_message("Something went wrong swapping storytellers")
+     
+@bot.tree.command(
+    name="player_list",
+    description="Show the players in a game",
+)
+async def printGameState(interaction: discord.Interaction): #Print game state for testing TODO make this pretty
+    await interaction.response.send_message(f"{gameState}")
 
 #Run the bot
 bot.run(TOKEN)
