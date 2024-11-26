@@ -2,6 +2,7 @@ from asyncio.windows_events import NULL
 import os
 import random
 import discord
+import typing
 from enum import Enum
 from discord.ext import commands   # Import the discord.py extension "commands"
 from discord import Interaction, app_commands
@@ -32,10 +33,24 @@ class GameState: #Class the holds the users set for the game
         self.active = False #Whever the game is running or not
 
     def __str__(self) -> str:
-        return f"Storyteller: {self.storyteller} \n Players: {self.players} \n Acive?: {self.active}"
+        playerNames = []
+        for player in self.players:
+            playerNames.append(player.name)
+        return f"Storyteller: {self.storyteller} \n Players: {playerNames} \n Acive?: {self.active}"
 
     def setStoryTeller(self,member: discord.Member):
         self.storyteller = member
+        
+    def addPlayer(self,player: discord.Member):
+        if not (player in self.players):
+            self.players.append(player)
+           
+    def removePlayer(self,player: discord.Member):
+        if player in self.players:
+            self.players.remove(player)
+            
+    def getPlayers(self):
+        return self.players
         
 gameState = GameState() # public game state
         
@@ -109,6 +124,48 @@ async def setStoryTeller(interaction: discord.Interaction, member: discord.Membe
         except Exception as e:
             print("Exception has occured while swappign storyteller:",e)
             await interaction.response.send_message("Something went wrong swapping storytellers")
+            
+@bot.tree.command(
+    name="add_player",
+    description="Add a player to the next game",
+)
+@app_commands.describe(member="The member to add")
+async def addPlayer(interaction: discord.Interaction, member: discord.Member): # add one player to an active game
+    if (member == gameState.storyteller):
+        await interaction.response.send_message("You cannot make the storyteller a player")
+    elif (gameState.active):
+        await interaction.response.send_message("You cannot add players during an active game")
+    else:
+        print(member)
+        try: #Roles might not exist
+            playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
+            if not (playerRole in member.roles):
+                await member.add_roles(playerRole) #Give them the player role if they do not have it already
+            gameState.addPlayer(member) #Add player to game
+            await interaction.response.send_message(f"Added player: {member} to the game")
+        except Exception as e:
+            print("Exception has occured while assigning players:",e)
+            await interaction.response.send_message("Something went wrong assigning players")
+            
+@bot.tree.command(
+    name="remove_player",
+    description="Remove a player from the next game",
+)
+@app_commands.describe(member="The member to remove")
+async def removePlayer(interaction: discord.Interaction, member: discord.Member): # remove one player from an active game
+    if (gameState.active):
+        await interaction.response.send_message("You cannot remove players during an active game")
+    else:
+        print(member)
+        try: #Roles might not exist
+            playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
+            if (playerRole in member.roles):
+                 await member.remove_roles(playerRole) #Remove the role
+            gameState.removePlayer(member) #Remove player to game
+            await interaction.response.send_message(f"Removed player: {member}")
+        except Exception as e:
+            print("Exception has occured while removing players:",e)
+            await interaction.response.send_message("Something went wrong removing players")
      
 @bot.tree.command(
     name="player_list",
