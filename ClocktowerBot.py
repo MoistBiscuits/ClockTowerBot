@@ -398,11 +398,17 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
         category = get(interaction.guild.categories,name=ChannelNames.category.value)
-        if category: # If category already exists delete it
-            print(f"Category already exists, delete")
+        if category: # If category already exists delete it adn its channels
+            print(f"Category already exists, delete all channels inside and it")
+            channels = category.channels
+            for channel in channels:
+                await channel.delete()
             await category.delete()
+            
+        #Create category
         gameState.channels.category = await interaction.guild.create_category(ChannelNames.category.value)
 
+        #Create the channels needed for the game to run
         await createStoryText(interaction)
         await createStoryVoice(interaction)
         await createTownText(interaction)
@@ -552,7 +558,7 @@ async def declareGamePhase(): #Bot states the phase of the game into chat
 
 @bot.tree.command(
     name="start_game",
-    description="Starts a BotCT game, make sure to add the players, storyteller and setup the new set of channels first!"
+    description="Starts a BoTC game, make sure to add the players, storyteller and setup the new set of channels first!"
 )
 async def startGame(interaction: discord.Interaction):
     if gameState.active:
@@ -561,7 +567,8 @@ async def startGame(interaction: discord.Interaction):
     if not gameState.channelReady:
         await interaction.response.send_message(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
         return
-    await interaction.response.defer(thinking=True)    
+    
+    await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess   
 
     await cleanRoles(gameState.getAllUsers()) #Remove any excess flag roles that users might have for some reason
     await alivePlayers(gameState.getPlayers()) #Give all players the alive role
