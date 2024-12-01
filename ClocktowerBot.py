@@ -104,24 +104,24 @@ class GameState: #Class the holds the users set for the game
         self.gameDay += 1
         
     def getAllUsers(self): #Returns all players and the storyteller as a List[discord.Member]
-        data = self.players[::]
+        data = self.players.copy()
         data.append(self.storyteller)
         return data
     
     def getGameTimeMsg(self) -> str: #Returns a string that summaries the current day phase
-        if self.gamePhase == 0: #night
+        if self.dayPhase == 0: #night
             if self.gameDay == 1: #First night
                 return f"It is Night 1, All players go to your room and wait to learn your role from the storyteller"
             else:
                 return f"It is Night {self.gameDay}, all players return to your rooms"
-        elif self.gamePhase == 1: #dawn
+        elif self.dayPhase == 1: #dawn
             return f"It is the dawn of Day {self.gameDay}, all players gather in the town square"
-        elif self.gamePhase == 2: #day
+        elif self.dayPhase == 2: #day
             return f"It is the midday of Day {self.gameDay}, all players are free to move about and chat"
-        elif self.gamePhase == 3: #dusk
+        elif self.dayPhase == 3: #dusk
             return f"It is the dusk of Day {self.gameDay}, all players gather in the town square for nominations"
         else: #error state, should never be reached
-            raise Exception(f"Expect gamephase to be in range (0,3) got {self.gamePhase}") 
+            raise Exception(f"Expect dayPhase to be in range (0,3) got {self.dayPhase}") 
         
     
 class GameChannels: #Holds the discord channels for use in the game
@@ -322,9 +322,9 @@ async def createTownText(interaction: discord.Interaction): #Create hub voice ch
     dayRole = get(interaction.guild.roles, name=Role.day.value) #Get day role from server
     storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
     overwrites = {
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        dayRole: discord.PermissionOverwrite(read_messages=True),
-        storyRole: discord.PermissionOverwrite(read_messages=True)
+        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=True,send_messages=False),
+        dayRole: discord.PermissionOverwrite(send_messages=True),
+        storyRole: discord.PermissionOverwrite(send_messages=True)
     }
     gameState.channels.townText = await interaction.guild.create_text_channel(name=ChannelNames.townText.value, overwrites=overwrites, category=gameState.channels.category)
     
@@ -423,14 +423,14 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
         await interaction.edit_original_response(content=f"Something went setting up channels")
         raise e
     
-async def cleanRoles(members: List[discord.Member]): #Clears the excess of roles of the given players, only remaining the player role, or storyteller role
+async def cleanRoles(guild: discord.Guild, members: List[discord.Member]): #Clears the excess of roles of the given players, only remaining the player role, or storyteller role
     try: #Roles might not exist or calling members may fail
         excessRoleList = []
-        excessRoleList.append(get(interaction.guild.roles, name=Role.alive.value))
-        excessRoleList.append(get(interaction.guild.roles, name=Role.day.value))
-        excessRoleList.append(get(interaction.guild.roles, name=Role.dead.value))
-        excessRoleList.append(get(interaction.guild.roles, name=Role.night.value))
-        excessRoleList.append(get(interaction.guild.roles, name=Role.roam.value))
+        excessRoleList.append(get(guild.roles, name=Role.alive.value))
+        excessRoleList.append(get(guild.roles, name=Role.day.value))
+        excessRoleList.append(get(guild.roles, name=Role.dead.value))
+        excessRoleList.append(get(guild.roles, name=Role.night.value))
+        excessRoleList.append(get(guild.roles, name=Role.roam.value))
         for member in members:
             for role in excessRoleList:
                 if (role in member.roles):
@@ -438,10 +438,10 @@ async def cleanRoles(members: List[discord.Member]): #Clears the excess of roles
     except Exception as e:
         raise e
     
-async def alivePlayers(members: List[discord.Member]): #give players the alive role, remove dead role if they have it
+async def alivePlayers(guild: discord.Guild, members: List[discord.Member]): #give players the alive role, remove dead role if they have it
     try: #Roles might not exist or calling members may fail
-        aliveRole = get(interaction.guild.roles, name=Role.alive.value)
-        deadRole = get(interaction.guild.roles, name=Role.dead.value)
+        aliveRole = get(guild.roles, name=Role.alive.value)
+        deadRole = get(guild.roles, name=Role.dead.value)
         for member in members:
             if deadRole in member.roles:
                 await member.remove_roles(deadRole)
@@ -450,10 +450,10 @@ async def alivePlayers(members: List[discord.Member]): #give players the alive r
     except Exception as e:
         raise e
     
-async def killPlayers(members: List[discord.Member]): #give players the dead role, remove alive role if they have it
+async def killPlayers(guild: discord.Guild, members: List[discord.Member]): #give players the dead role, remove alive role if they have it
     try: #Roles might not exist or calling members may fail
-        aliveRole = get(interaction.guild.roles, name=Role.alive.value)
-        deadRole = get(interaction.guild.roles, name=Role.dead.value)
+        aliveRole = get(guild.roles, name=Role.alive.value)
+        deadRole = get(guild.roles, name=Role.dead.value)
         for member in members:
             if aliveRole in member.roles:
                 await member.remove_roles(aliveRole)
@@ -462,41 +462,30 @@ async def killPlayers(members: List[discord.Member]): #give players the dead rol
     except Exception as e:
         raise e
     
-async def unlockPlayersPrivateRoom(interaction: discord.Interaction,members: List[discord.Member]): #Give players permission to enter their private room
+async def unlockPlayersPrivateRoom(guild: discord.Guild ,members: List[discord.Member]): #Give players permission to enter their private room
     try: #Roles might not exist or calling members may fail
         for member in members:
             privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-            overwrites = {
-                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                member: discord.PermissionOverwrite(read_messages=True),
-                storyRole: discord.PermissionOverwrite(read_messages=True)
-            }
-            privateRoom.set_permissions(overwrite=overwrites)
+            await privateRoom.set_permissions(member,read_messages=True)
     except Exception as e:
         raise e
     
-async def lockPlayersPrivateRoom(interaction: discord.Interaction,members: List[discord.Member]): #Remove players permission to enter their private room
+async def lockPlayersPrivateRoom(guild: discord.Guild,members: List[discord.Member]): #Remove players permission to enter their private room
     try: #Roles might not exist or calling members may fail
         for member in members:
             privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-            overwrites = {
-                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                storyRole: discord.PermissionOverwrite(read_messages=True)
-            }
-            privateRoom.set_permissions(overwrite=overwrites)
+            await privateRoom.set_permissions(member,read_messages=False)
     except Exception as e:
         raise e
 
-async def sendPlayersToPrivateRoom(members: List[discord.Member]): #give players the Night role, remove day and roam roles and send them to their private room
+async def sendPlayersToPrivateRoom(guild: discord.Guild, members: List[discord.Member]): #give players the Night role, remove day and roam roles and send them to their private room
     try: #Roles might not exist or calling members may fail
-        dayRole = get(interaction.guild.roles, name=Role.day.value)
-        roamRole = get(interaction.guild.roles, name=Role.roam.value)
-        nightRole = get(interaction.guild.roles, name=Role.night.value)
+        dayRole = get(guild.roles, name=Role.day.value)
+        roamRole = get(guild.roles, name=Role.roam.value)
+        nightRole = get(guild.roles, name=Role.night.value)
 
         #Players need to be able to access their room to be sent to it
-        await unlockPlayersPrivateRoom(members)        
+        await unlockPlayersPrivateRoom(guild,members)        
 
         for member in members:
             if not (member in gameState.getPlayers()):
@@ -506,17 +495,21 @@ async def sendPlayersToPrivateRoom(members: List[discord.Member]): #give players
             if roamRole in member.roles:
                 await member.remove_roles(roamRole)
             if not (nightRole in member.roles):
-                await member.add_roles(nightRole)
-            privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            await member.move_to(privateRoom) #move them to their channel  
+                await member.add_roles(nightRole) 
     except Exception as e:
         raise e
     
-async def sendPlayersToTown(members: List[discord.Member]): #Give players the Day Role, remove night and roam roles and force them into town
+    try: #Try to move them from current vc to new vc, fails is user is in no vc
+        privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
+        await member.move_to(privateRoom) #move them to their channel 
+    except Exception as e:
+        print(e)
+    
+async def sendPlayersToTown(guild: discord.Guild, members: List[discord.Member]): #Give players the Day Role, remove night and roam roles and force them into town
     try: #Roles might not exist or calling members may fail
-        dayRole = get(interaction.guild.roles, name=Role.day.value)
-        roamRole = get(interaction.guild.roles, name=Role.roam.value)
-        nightRole = get(interaction.guild.roles, name=Role.night.value)
+        dayRole = get(guild.roles, name=Role.day.value)
+        roamRole = get(guild.roles, name=Role.roam.value)
+        nightRole = get(guild.roles, name=Role.night.value)
 
         #Players should be blocked from their rooms
         await lockPlayersPrivateRoom(members)        
@@ -530,12 +523,16 @@ async def sendPlayersToTown(members: List[discord.Member]): #Give players the Da
                 await member.remove_roles(roamRole)
             if not (dayRole in member.roles):
                 await member.add_roles(dayRole)
-            town = gameState.channels.townVoice
-            await member.move_to(town) #move them to their channel  
     except Exception as e:
         raise e
     
-async def allowPlayersRoam(members: List[discord.Member]): #Give players the Roam role, lets them visit public rooms
+    try: #Try to move them from current vc to new vc, fails is user is in no vc
+        town = gameState.channels.townVoice
+        await member.move_to(town) #move them to their channel 
+    except Exception as e:
+        print(e)
+        
+async def allowPlayersRoam(interaction: discord.Interaction, members: List[discord.Member]): #Give players the Roam role, lets them visit public rooms
     try:
         roamRole = get(interaction.guild.roles, name=Role.roam.value)
         for member in members:
@@ -544,7 +541,7 @@ async def allowPlayersRoam(members: List[discord.Member]): #Give players the Roa
     except Exception as e:
         raise e
     
-async def denyPlayersRoam(members: List[discord.Member]): #Remove player(s)'s Roam role if they have it, denying them from public rooms
+async def denyPlayersRoam(interaction: discord.Interaction, members: List[discord.Member]): #Remove player(s)'s Roam role if they have it, denying them from public rooms
     try:
         roamRole = get(interaction.guild.roles, name=Role.roam.value)
         for member in members:
@@ -558,7 +555,7 @@ async def declareGamePhase(): #Bot states the phase of the game into chat
 
 @bot.tree.command(
     name="start_game",
-    description="Starts a BoTC game, make sure to add the players, storyteller and setup the new set of channels first!"
+    description="Starts a BoTC game: setup players, storyteller and channel first"
 )
 async def startGame(interaction: discord.Interaction):
     if gameState.active:
@@ -570,13 +567,13 @@ async def startGame(interaction: discord.Interaction):
     
     await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess   
 
-    await cleanRoles(gameState.getAllUsers()) #Remove any excess flag roles that users might have for some reason
-    await alivePlayers(gameState.getPlayers()) #Give all players the alive role
-    await sendPlayersToPrivateRoom(gameState.getPlayers()) #Send all players to their private room
+    await cleanRoles(interaction.guild,gameState.getAllUsers()) #Remove any excess flag roles that users might have for some reason
+    await alivePlayers(interaction.guild,gameState.getPlayers()) #Give all players the alive role
+    await sendPlayersToPrivateRoom(interaction.guild,gameState.getPlayers()) #Send all players to their private room
     
     await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
     
-    declareGamePhase() # Declare the time, the first night
+    await declareGamePhase() # Declare the time, the first night
     
             
 #Run the bot
