@@ -1,4 +1,5 @@
 *.pyproj
 *.pyproj.user
 *.env
+*.log
 env*
