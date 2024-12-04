@@ -90,8 +90,15 @@ class GameState: #Class the holds the users set for the game
         if player in self.players:
             self.players.remove(player)
             
-    def getPlayers(self):
-        return self.players
+    def getPlayers(self,guild: discord.Guild): #Gets the most recent instance of the players in the game as a List{dsicord.Member}
+        value = []
+        playerIds = []
+        for member in self.players:
+            playerIds.append(member.id)
+        for member in guild.members:
+            if member.id in playerIds:
+                value.append(member)
+        return value
     
     def addPrivateRoom(self,player: discord.Member,room: discord.channel):
         if player in self.players:
@@ -120,10 +127,12 @@ class GameState: #Class the holds the users set for the game
     def incrementDayCount(self):
         self.gameDay += 1
         
-    def getAllUsers(self): #Returns all players and the storyteller as a List[discord.Member]
-        data = self.players.copy()
-        data.append(self.storyteller)
-        return data
+    def getAllUsers(self,guild: discord.Guild): #Returns all players and the storyteller as a List[discord.Member]
+        value = self.getPlayers(guild)
+        for member in guild.members:
+            if member.id == self.storyteller.id:
+                value.append(member)
+        return value
     
     def getGameTimeMsg(self) -> str: #Returns a string that summaries the current day phase
         if self.dayPhase == 0: #night
@@ -395,7 +404,7 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
     if gameState.active:
         await interaction.response.send_message(content=f"Cannot setup channels during an active game")
         return
-    if gameState.getPlayers() == []:
+    if gameState.getPlayers(interaction.guild) == []:
         await interaction.response.send_message(content=f"Cannot setup channels with no added players")
         return
     try:
@@ -417,7 +426,7 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
         await createTownText(interaction)
         await createTownVoice(interaction)
         await createPublicVoice(interaction,8)
-        await createPrivateVoice(interaction,gameState.getPlayers())
+        await createPrivateVoice(interaction,gameState.getPlayers(interaction.guild))
         gameState.channelReady = True
         await interaction.edit_original_response(content=f"Succesfully created channels")
     except Exception as e:
@@ -596,15 +605,15 @@ async def denyPlayersRoam(guild: discord.Guild, members: List[discord.Member]): 
     
 async def handlePlayerMovement(guild: discord.guild): #Handles player movement based on the phase of the game
     if gameState.dayPhase == 0: #Night movement, send to private room
-        await sendPlayersToPrivateRoom(guild,gameState.getPlayers())
+        await sendPlayersToPrivateRoom(guild,gameState.getPlayers(guild))
     elif gameState.dayPhase == 1: #Dawn movement, bring to town, announce night actions
-        await sendPlayersToTown(guild,gameState.getPlayers())
+        await sendPlayersToTown(guild,gameState.getPlayers(guild))
     elif gameState.dayPhase == 2: #Midday movement, allow players to privately talk
-        await movePlayersToTown(guild,gameState.getPlayers())
-        await allowPlayersRoam(guild,gameState.getPlayers())
+        await movePlayersToTown(guild,gameState.getPlayers(guild))
+        await allowPlayersRoam(guild,gameState.getPlayers(guild))
     elif gameState.dayPhase == 3: #Dusk movement, deny players private talk, bring to town for nominations
-        await movePlayersToTown(guild,gameState.getPlayers())
-        await denyPlayersRoam(guild,gameState.getPlayers())
+        await movePlayersToTown(guild,gameState.getPlayers(guild))
+        await denyPlayersRoam(guild,gameState.getPlayers(guild))
     else: #Error state, should not be called
         raise Exception(f"dayPhase: {gameState.dayPhase} not in range o to 3")
     
@@ -625,9 +634,9 @@ async def startGame(interaction: discord.Interaction):
     
     await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess   
 
-    await setRoles(interaction.guild,gameState.getPlayers(),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
+    await setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
     
-    await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers()) #move all players to their private room
+    await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers(interaction.guild)) #move all players to their private room
     gameState.active = True    
 
     await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
