@@ -1,4 +1,5 @@
 from asyncio.windows_events import NULL
+from itertools import filterfalse
 import os
 import random
 from tkinter.tix import INTEGER
@@ -78,6 +79,13 @@ class GameState: #Class the holds the users set for the game
         self.active = True
         self.gameDay = 1
         self.gamePhase = 0
+        
+    def endGame(self):
+        self.active = False
+        self.channelReady = False
+        self.players = []
+        self.storyteller = None
+        self.playerChannelDict = {}
 
     def setStoryTeller(self,member: discord.Member):
         self.storyteller = member
@@ -643,6 +651,33 @@ async def startGame(interaction: discord.Interaction):
     
     await declareGamePhase() # Declare the time, the first night
     
+@bot.tree.command(
+    name="end_game",
+    description="Ends the active game, with an optional reason"
+)
+@app_commands.choices(reason=[ 
+    app_commands.Choice(name="Good wins", value="The good team wins!"),
+    app_commands.Choice(name="Evil wins", value="The evil team wins!"),
+    app_commands.Choice(name="Draw", value="The game is over, it is a draw!"),
+    app_commands.Choice(name="None", value="The game is over!"),
+])
+@app_commands.describe(reason="The reason the game is over (optional)")
+async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[str] = None): #Ends an active game, with a given reason
+    if not gameState.active:
+        await interaction.response.send_message(content=f"There is no active game to end")
+        return    
+
+    await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess
+    
+    gameState.endGame()
+
+    if reason == None:
+        await gameState.channels.getTownText().send(f"The game is over!")
+    else:
+        await gameState.channels.getTownText().send(reason.value)
+
+    await interaction.edit_original_response(content=f"The game has been ended!")
+
 @bot.tree.command(
     name="advance_phase",
     description="Advances the current game to the next phase or a set time if given"
