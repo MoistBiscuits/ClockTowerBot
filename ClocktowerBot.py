@@ -474,7 +474,7 @@ async def alivePlayers(guild: discord.Guild, members: List[discord.Member]): #gi
                 roles.remove(deadRole)
             if not (aliveRole in member.roles):
                 roles.append(aliveRole)
-            member.edit(roles=roles)
+            await member.edit(roles=roles)
     except Exception as e:
         raise e
     
@@ -488,7 +488,7 @@ async def killPlayers(guild: discord.Guild, members: List[discord.Member]): #giv
                 roles.remove(aliveRole)
             if not (deadRole in member.roles):
                 roles.append(deadRole)
-            member.edit(roles=roles)
+            await member.edit(roles=roles)
     except Exception as e:
         raise e
     
@@ -697,6 +697,68 @@ async def retryPlayerMovement(interaction: discord.Interaction):
     await handlePlayerMovement(interaction.guild)
     
     await interaction.edit_original_response(content=f"Attempted to move players to the appropriate channel")
+  
+async def killPlayerWithReason(interaction: discord.Interaction, member: discord.Member, reason: str = None): #Kill and announce a player is dead with a given reason   
+    await killPlayers(interaction.guild,[member]) # Mark their roles as dead
+    
+    if reason == None:
+        await gameState.channels.getTownText().send(f"{member} is dead!")
+    else:
+        await gameState.channels.getTownText().send(f"{member} {reason}")
+
+@bot.tree.command(
+    name="kill_player",
+    description="Announces and marks that a player is dead, with an optional reason"
+)
+@app_commands.choices(reason=[ 
+    app_commands.Choice(name="None", value="is dead!"),
+    app_commands.Choice(name="Died last night", value="died last night!"),
+    app_commands.Choice(name="Execution", value="was executed!"),
+    app_commands.Choice(name="Unknown", value="somehow died for no known reason!"),
+])
+@app_commands.describe(member="The member to kill")
+@app_commands.describe(reason="The given announced reason (optional)")
+async def killPlayer(interaction: discord.Interaction, member: discord.Member, reason: app_commands.Choice[str] = None): #Marks that a player is dead and announces the death to all players
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    #note, in the rules of BonCT, it is possible for an already dead player to be killed again    
+
+    if not gameState.active:
+        await interaction.edit_original_response(content=f"Requires a game to be running")
+        return
+    
+    if not (member in gameState.getPlayers(interaction.guild)):
+        await interaction.edit_original_response(content=f"{member} is not listed as a player")
+        return
+    
+    if reason == None:
+        string = None
+    else:
+        string = reason.value
+    await killPlayerWithReason(interaction,member,string)
+    
+    await interaction.edit_original_response(content=f"Killed player: {member}")
+    
+@bot.tree.command(
+    name="ressurect_player",
+    description="Announce and marks that a player is alive, used for certain player abilities"
+)
+@app_commands.describe(member="The member to ressurect")
+async def alivePlayer(interaction: discord.Interaction,member: discord.Member): #Marks a player as alive and announced it to all players
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    
+    if not gameState.active:
+        await interaction.edit_original_response(content=f"Requires a game to be running")
+        return
+    
+    if not (member in gameState.getPlayers(interaction.guild)):
+        await interaction.edit_original_response(content=f"{member} is not listed as a player")
+        return
+    
+    await alivePlayers(interaction.guild,[member])
+    
+    await gameState.channels.getTownText().send(f"{member} is alive!")
+    
+    
 
 #Run the bot
 bot.run(TOKEN,log_handler=handler,log_level=logging.DEBUG)
