@@ -447,8 +447,10 @@ async def setRoles(guild:discord.Guild, members: List[discord.Member], roles: Li
                 if (role in newRoles):
                     newRoles.remove(role)
             for role in roles:
-                newRoles.append(role)
-            member.edit(roles=newRoles)
+                if not (role in newRoles):
+                    newRoles.append(role)
+            print(f"user: {member} roles {roles}")
+            await member.edit(roles=newRoles)
         
     except Exception as e:
         raise e
@@ -501,6 +503,7 @@ async def sendPlayersToPrivateRoom(guild: discord.Guild, members: List[discord.M
     try: #Roles might not exist or calling members may fail
         dayRole = get(guild.roles, name=Role.day.value)
         nightRole = get(guild.roles, name=Role.night.value)
+        roamRole = get(guild.roles, name=Role.roam.value)
 
         #Players need to be able to access their room to be sent to it
         await unlockPlayersPrivateRoom(guild,members)        
@@ -509,6 +512,8 @@ async def sendPlayersToPrivateRoom(guild: discord.Guild, members: List[discord.M
             roles = member.roles
             if dayRole in roles:
                 roles.remove(dayRole)
+            if roamRole in roles:
+                roles.remove(roamRole)
             if not (nightRole in roles):
                 roles.append(nightRole)
             await member.edit(roles=roles) #You must add roles atmoically or errors occour, it sucks
@@ -537,6 +542,7 @@ async def sendPlayersToTown(guild: discord.Guild, members: List[discord.Member])
     try: #Roles might not exist or calling members may fail
         dayRole = get(guild.roles, name=Role.day.value)
         nightRole = get(guild.roles, name=Role.night.value)
+        roamRole = get(guild.roles, name=Role.roam.value)
 
         #Players should be blocked from their rooms
         await lockPlayersPrivateRoom(guild, members)        
@@ -545,23 +551,25 @@ async def sendPlayersToTown(guild: discord.Guild, members: List[discord.Member])
             roles = member.roles
             if nightRole in roles:
                 roles.remove(nightRole)
+            if roamRole in roles:
+                roles.remove(roamRole)
             if not (dayRole in roles):
                 roles.append(dayRole)
-            await member.edit(roles=roles) #You must add roles atmoically or errors occour, it sucks
+            await member.edit(roles=roles) #You must add roles atmoically or eronious errors occour, it sucks I hate asynchronous programming
     except Exception as e:
         raise e
     
+    town = gameState.channels.townVoice
     for member in members:
         try: #Try to move them from current vc to new vc, fails is user is in no vc
-            town = gameState.channels.townVoice
             await member.move_to(town) #move them to their channel 
         except Exception as e:
             print(e)
             
 async def movePlayersToTown(guild: discord.Guild, members: List[discord.Member]): #Moves players to townsquare without chaing their perms
+    town = gameState.channels.townVoice
     for member in members:
         try: #Try to move them from current vc to new vc, fails is user is in no vc
-            town = gameState.channels.townVoice
             await member.move_to(town) #move them to their channel 
         except Exception as e:
             print(e)    
@@ -570,6 +578,7 @@ async def allowPlayersRoam(guild: discord.Guild, members: List[discord.Member]):
     try:
         roamRole = get(guild.roles, name=Role.roam.value)
         for member in members:
+            print(f"user: {member} roles {member.roles}")
             if not (roamRole in member.roles):
                 await member.add_roles(roamRole)
     except Exception as e:
@@ -579,6 +588,7 @@ async def denyPlayersRoam(guild: discord.Guild, members: List[discord.Member]): 
     try:
         roamRole = get(guild.roles, name=Role.roam.value)
         for member in members:
+            print(f"user: {member} roles {member.roles}")
             if roamRole in member.roles:
                 await member.remove_roles(roamRole)
     except Exception as e:
@@ -593,8 +603,8 @@ async def handlePlayerMovement(guild: discord.guild): #Handles player movement b
         await movePlayersToTown(guild,gameState.getPlayers())
         await allowPlayersRoam(guild,gameState.getPlayers())
     elif gameState.dayPhase == 3: #Dusk movement, deny players private talk, bring to town for nominations
-        await denyPlayersRoam(guild,gameState.getPlayers())
         await movePlayersToTown(guild,gameState.getPlayers())
+        await denyPlayersRoam(guild,gameState.getPlayers())
     else: #Error state, should not be called
         raise Exception(f"dayPhase: {gameState.dayPhase} not in range o to 3")
     
@@ -615,9 +625,9 @@ async def startGame(interaction: discord.Interaction):
     
     await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess   
 
-    await setRoles(interaction.guild,gameState.getAllUsers(),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
+    await setRoles(interaction.guild,gameState.getPlayers(),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
     
-    await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers()) #Send all players to their private room
+    await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers()) #move all players to their private room
     gameState.active = True    
 
     await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
