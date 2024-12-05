@@ -2,6 +2,7 @@ from asyncio.windows_events import NULL
 from itertools import filterfalse
 import os
 import random
+from sqlite3 import connect
 from tkinter.tix import INTEGER
 import discord
 import typing
@@ -17,6 +18,12 @@ import asyncio
 import logging
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+
+#Dictionary types
+RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
+RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
+
+
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -180,10 +187,6 @@ class GameChannels: #Holds the discord channels for use in the game
             
     def getTownText(self) -> discord.TextChannel:
         return self.townText
-    
-#Dictionary types
-RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
-RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
 
 """
 Public rooms in the bot are designed so that once users join a private room, it prevents other users joining later from listening in
@@ -223,11 +226,12 @@ class ChannelLocks: #Holds the data on which discord channels auto deafen users 
                     
     def getWhitelistedMembers(self,room:discord.VoiceChannel) -> List[discord.Member]: #Returns which users are allowed to talk in a room if it is locked
         if room in self.roomMembers:
-            return self.roomMembers[room]        
-               
-gameState = GameState() # public game state
-commandLockingGuilds = []
+            return self.roomMembers[room]
         
+gameState = GameState() # public game state
+commandLock = asyncio.Lock() #Asyncio lock that handles discord command execution
+voiceStateLock = asyncio.Lock() #Asyncio lock that handles member join channel events
+
 @bot.event
 async def on_ready(): #On bot startup
     print(f"Logged in as {bot.user.name}")
@@ -236,20 +240,6 @@ async def on_ready(): #On bot startup
         print(f"Synced {len(synced)} commands.")
     except Exception as e:
         print("Exception has occured while syncing tree:",e)
-        
-def claimLockingGuild(guild: discord.guild): #Active process claims execution rights, prevents other critical data commands from running
-    if not (guild in commandLockingGuilds):
-        commandLockingGuilds.append(guild)
-        
-def yeildLockingGuid(guild: discord.Guild): #Active process yeilds execution rights, letting other critical data commands to run
-    if guild in commandLockingGuilds:
-        commandLockingGuilds.remove(guild)
-        
-def checkLockingGuild(guild: discord.Guild) -> bool: #Check if a guild has a lock an ciritical data rights
-    if (guild in commandLockingGuilds):
-        return True
-    else:
-        return False
 
 async def pleaseWaitResponse(interaction: discord.Interaction, edit: bool = False):
     if edit:
@@ -279,13 +269,12 @@ async def setupRoles(interaction: discord.Interaction): # create roles used by t
 )
 @app_commands.describe(member="The member to make the story teller")
 async def setStoryTeller(interaction: discord.Interaction, member: discord.Member): # Set who is the storyteller for a unactive game
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
     if (gameState.active):
-        await interaction.response.send_message("You cannot change the storyteller during an active game")
+        await interaction.edit_original_response(content="You cannot change the storyteller during an active game")
+        commandLock.release()
     else:
-        claimLockingGuild(interaction.guild)
         print(member)
         try: #Roles might not exist
             storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
@@ -298,12 +287,12 @@ async def setStoryTeller(interaction: discord.Interaction, member: discord.Membe
                 await gameState.storyteller.remove_roles(storyRole)
             await member.add_roles(storyRole)
             gameState.setStoryTeller(member)
-            yeildLockingGuid(interaction.guild)
-            await interaction.response.send_message(f"{member} is now the storyteller")
+            await interaction.edit_original_response(content=f"{member} is now the storyteller")
         except Exception as e:
-            yeildLockingGuid(interaction.guild)
             print("Exception has occured while swappign storyteller:",e)
-            await interaction.response.send_message("Something went wrong swapping storytellers")
+            await interaction.edit_original_response(content="Something went wrong swapping storytellers")
+        finally:
+            commandLock.release()
             
 @bot.tree.command(
     name="add_player",
@@ -311,15 +300,15 @@ async def setStoryTeller(interaction: discord.Interaction, member: discord.Membe
 )
 @app_commands.describe(member="The member to add")
 async def addPlayer(interaction: discord.Interaction, member: discord.Member): # add one player to an active game
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
     if (member == gameState.storyteller):
-        await interaction.response.send_message("You cannot make the storyteller a player")
+        await interaction.edit_original_response(content="You cannot make the storyteller a player")
+        commandLock.release()
     elif (gameState.active):
-        await interaction.response.send_message("You cannot add players during an active game")
+        await interaction.edit_original_response(content="You cannot add players during an active game")
+        commandLock.release()
     else:
-        claimLockingGuild(interaction.guild)
         print(member)
         try: #Roles might not exist
             playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
@@ -327,12 +316,12 @@ async def addPlayer(interaction: discord.Interaction, member: discord.Member): #
                 await member.add_roles(playerRole) #Give them the player role if they do not have it already
             gameState.addPlayer(member) #Add player to game
             gameState.channelReady = False #Change of players means a new channel setup must be made
-            yeildLockingGuid(interaction.guild)
-            await interaction.response.send_message(f"Added player: {member} to the game")
+            await interaction.edit_original_response(content=f"Added player: {member} to the game")
         except Exception as e:
-            yeildLockingGuid(interaction.guild)
             print("Exception has occured while assigning players:",e)
-            await interaction.response.send_message("Something went wrong assigning players")
+            await interaction.edit_original_response(content="Something went wrong assigning players")
+        finally:
+            commandLock.release()
             
 @bot.tree.command(
     name="remove_player",
@@ -340,26 +329,25 @@ async def addPlayer(interaction: discord.Interaction, member: discord.Member): #
 )
 @app_commands.describe(member="The member to remove")
 async def removePlayer(interaction: discord.Interaction, member: discord.Member): # remove one player from an active game
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
     if (gameState.active):
-        await interaction.response.send_message("You cannot remove players during an active game")
+        await interaction.response.edit_original_response(content="You cannot remove players during an active game")
+        commandLock.release()
     else:
         print(member)
-        claimLockingGuild(interaction.guild)
         try: #Roles might not exist
             playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
             if (playerRole in member.roles):
                  await member.remove_roles(playerRole) #Remove the role
             gameState.removePlayer(member) #Remove player to game
             gameState.channelReady = False #Change of players means a new channel setup must be made
-            yeildLockingGuid(interaction.guild)
-            await interaction.response.send_message(f"Removed player: {member}")
+            await interaction.response.edit_original_response(content=f"Removed player: {member}")
         except Exception as e:
-            yeildLockingGuid(interaction.guild)
             print("Exception has occured while removing players:",e)
-            await interaction.response.send_message("Something went wrong removing players")
+            await interaction.response.edit_original_response(content="Something went wrong removing players")
+        finally:
+            commandLock.release()
      
 @bot.tree.command(
     name="player_list",
@@ -374,13 +362,13 @@ async def printGameState(interaction: discord.Interaction): #Print game state fo
 )
 async def syncRoles(interaction: discord.Interaction): #Sync the discord roles to the bots game state, if possible
     global gameState
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
-    if (gameState.active): #Changing the playlist mid-game will break things
-        await interaction.response.send_message("You cannot change the game's state while a match is active")
+    
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
+    if gameState.active: #Changing the playlist mid-game will break things
+        await interaction.edit_original_response(content="You cannot change the game's state while a match is active")
+        commandLock.release()
     else:
-        claimLockingGuild(interaction.guild)
         try: #Roles might not exist or calling members may fail
             memberList = interaction.guild.fetch_members() #Get all the servers members, might be dangerous but this bot has a limited scope in users
             newGameState = GameState()
@@ -388,10 +376,10 @@ async def syncRoles(interaction: discord.Interaction): #Sync the discord roles t
             storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
             async for member in memberList:
                 if (storyRole in member.roles) and (playerRole in member.roles): #A user is both storyteller and player
-                    await interaction.response.send_message(f"{member} cannot be both a player and a storyteller")
+                    await interaction.edit_original_response(content=f"{member} cannot be both a player and a storyteller")
                     return
                 if (storyRole in member.roles) and (newGameState.storyteller != None): #If a user is set as storyteller while another is a storyteller
-                    await interaction.response.send_message(f"{member} and {newGameState.storyteller} cannot be both be storytellers")
+                    await interaction.edit_original_response(content=f"{member} and {newGameState.storyteller} cannot be both be storytellers")
                     return
                 if playerRole in member.roles:
                     newGameState.addPlayer(member)
@@ -400,12 +388,12 @@ async def syncRoles(interaction: discord.Interaction): #Sync the discord roles t
                     
             gameState = newGameState #Update gamestate
             gameState.channelReady = False #Change of players means a new channel setup must be made
-            yeildLockingGuid(interaction.guild)
-            await interaction.response.send_message(f"Synced member roles to the bot successfully")
+            await interaction.edit_original_response(content=f"Synced member roles to the bot successfully")
         except Exception as e:
-            yeildLockingGuid(interaction.guild)
             print("Exception has occured while syncing player roles:",e)
-            await interaction.response.send_message("Something went wrong syncing roles")
+            await interaction.edit_original_response(content="Something went wrong syncing roles")
+        finally:
+            commandLock.release()
             
 async def createStoryText(interaction: discord.Interaction): #Create storyteller text channel
     storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
@@ -481,9 +469,9 @@ async def createPublicVoice(interaction: discord.Interaction,count=8): #Creates 
     roamRole = get(interaction.guild.roles, name=Role.roam.value)
     for i in range(0,count):
         overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            roamRole: discord.PermissionOverwrite(read_messages=True),
-            storyRole: discord.PermissionOverwrite(read_messages=True)
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False,connect=False),
+            roamRole: discord.PermissionOverwrite(read_messages=True,connect=True),
+            storyRole: discord.PermissionOverwrite(read_messages=True,connect=True)
         }
         room = await interaction.guild.create_voice_channel(name=ChannelNames.dayRooms.value[i], overwrites=overwrites, category=gameState.channels.category)
         gameState.channels.addPublicRoom(room)
@@ -501,18 +489,17 @@ def setupChannelLocks(channels: List[discord.VoiceChannel]):
     description="creates the channels needed for the game if they do not exist",
 )
 async def setupChannels(interaction: discord.Interaction): #Creates the text and voice channels for the bot#
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
     if gameState.active:
-        await interaction.response.send_message(content=f"Cannot setup channels during an active game")
+        await interaction.edit_original_response(content=f"Cannot setup channels during an active game")
+        commandLock.release()
         return
     if gameState.getPlayers(interaction.guild) == []:
-        await interaction.response.send_message(content=f"Cannot setup channels with no added players")
+        await interaction.edit_original_response(content=f"Cannot setup channels with no added players")
+        commandLock.release()
         return
     try:
-        claimLockingGuild(interaction.guild)
-        await interaction.response.defer(thinking=True, ephemeral=True)
         category = get(interaction.guild.categories,name=ChannelNames.category.value)
         if category: # If category already exists delete it adn its channels
             print(f"Category already exists, delete all channels inside and it")
@@ -535,14 +522,13 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
         setupChannelLocks(gameState.channels.publicRooms)
         
         gameState.channelReady = True
-        yeildLockingGuid(interaction.guild)
         await interaction.edit_original_response(content=f"Succesfully created channels")
     except Exception as e:
         print("Exception has occured while setting up channels:",e)
         gameState.channelReady = False
-        yeildLockingGuid(interaction.guild)
         await interaction.edit_original_response(content=f"Something went setting up channels")
-        raise e
+    finally:
+        commandLock.release()
     
 """
 Sets the roles of a list of users
@@ -734,19 +720,14 @@ async def declareGamePhase(): #Bot states the phase of the game into chat
     description="Starts a BoTC game: setup players, storyteller and channel first"
 )
 async def startGame(interaction: discord.Interaction):
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction)
-        return
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
     if gameState.active:
-        await interaction.response.send_message(content=f"A game is already running, end it before starting a new one")
+        await interaction.edit_original_response(content=f"A game is already running, end it before starting a new one")
         return
     if not gameState.channelReady:
-        await interaction.response.send_message(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
-        return
-    
-    claimLockingGuild(interaction.guild)
-
-    await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess   
+        await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
+        return 
 
     await setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
     
@@ -757,7 +738,7 @@ async def startGame(interaction: discord.Interaction):
     
     await declareGamePhase() # Declare the time, the first night
     
-    yeildLockingGuid(interaction.guild)
+    commandLock.release()
     
 @bot.tree.command(
     name="end_game",
@@ -771,17 +752,12 @@ async def startGame(interaction: discord.Interaction):
 ])
 @app_commands.describe(reason="The reason the game is over (optional)")
 async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[str] = None): #Ends an active game, with a given reason
-    await interaction.response.defer(thinking=True) #Let discord know the bot is working through a proccess
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction,True)
-        return
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
     if not gameState.active:
         await interaction.edit_original_response(content=f"There is no active game to end")
         return    
 
-    claimLockingGuild(interaction.guild)
-    
-    
     gameState.endGame()
 
     if reason == None:
@@ -789,8 +765,8 @@ async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[
     else:
         await gameState.channels.getTownText().send(reason.value)
 
-    yeildLockingGuid(interaction.guild)
     await interaction.edit_original_response(content=f"The game has been ended!")
+    commandLock.release()
 
 @bot.tree.command(
     name="advance_phase",
@@ -806,11 +782,8 @@ async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[
 @app_commands.describe(time="The next phase to skip the game to (optional)")
 @app_commands.describe(time="The day number to skip the game to (optional)")
 async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Choice[int] = None, day: int = None):
-    await interaction.response.defer(thinking=True,ephemeral=True)  
-
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction,True)
-        return
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
 
     if not gameState.active: # Cant advance an inactive game
         await interaction.edit_original_response(content=f"Requires a game to be running")
@@ -820,7 +793,6 @@ async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Cho
         await interaction.edit_original_response(content=f"Cannot set day number to: {day}")
         return
     
-    claimLockingGuild(interaction.guild)
     if time == None: #If no argument passed
         if not (day == None):
             gameState.gameDay = day
@@ -834,35 +806,29 @@ async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Cho
     await handlePlayerMovement(interaction.guild)
 
     await declareGamePhase()
-    
-    yeildLockingGuid(interaction.guild)
+
     await interaction.edit_original_response(content=f"Advanced to day: {gameState.gameDay}, phase: {gameState.dayPhase} and attempted to move players to the correct channel")
-    
+    commandLock.release()    
+
 @bot.tree.command(
     name="retry_player_movement",
     description="Attempts to move all players according to the day phase"
 )
 async def retryPlayerMovement(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True,ephemeral=True)    
-
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction,True)
-        return
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
     if not gameState.active:
         await interaction.edit_original_response(content=f"Requires a game to be running")
         return
     
-    claimLockingGuild(interaction.guild)
-    await handlePlayerMovement(interaction.guild)
-    yeildLockingGuid(interaction.guild)    
+    await handlePlayerMovement(interaction.guild) 
 
     await interaction.edit_original_response(content=f"Attempted to move players to the appropriate channel")
+    commandLock.release()
   
 async def killPlayerWithReason(interaction: discord.Interaction, member: discord.Member, reason: str = None): #Kill and announce a player is dead with a given reason   
-    
     await killPlayers(interaction.guild,[member]) # Mark their roles as dead
-    
-    
+
     if reason == None:
         await gameState.channels.getTownText().send(f"{member} is dead!")
     else:
@@ -882,11 +848,8 @@ async def killPlayerWithReason(interaction: discord.Interaction, member: discord
 @app_commands.describe(reason="The given announced reason (optional)")
 async def killPlayer(interaction: discord.Interaction, member: discord.Member, reason: app_commands.Choice[str] = None): #Marks that a player is dead and announces the death to all players
     await interaction.response.defer(thinking=True,ephemeral=True)
-    #note, in the rules of BonCT, it is possible for an already dead player to be killed again    
-
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction,True)
-        return
+    await commandLock.acquire()
+    #note, in the rules of BonCT, it is possible for an already dead player to be killed again, see: vigormortis role    
     
     if not gameState.active:
         await interaction.edit_original_response(content=f"Requires a game to be running")
@@ -895,15 +858,14 @@ async def killPlayer(interaction: discord.Interaction, member: discord.Member, r
     if not (member in gameState.getPlayers(interaction.guild)):
         await interaction.edit_original_response(content=f"{member} is not listed as a player")
         return
-    claimLockingGuild(interaction.guild)
     
     if reason == None:
         string = None
     else:
         string = reason.value
     await killPlayerWithReason(interaction,member,string)
-    yeildLockingGuid(interaction.guild)
     await interaction.edit_original_response(content=f"Killed player: {member}")
+    commandLock.release()
     
 @bot.tree.command(
     name="ressurect_player",
@@ -912,10 +874,7 @@ async def killPlayer(interaction: discord.Interaction, member: discord.Member, r
 @app_commands.describe(member="The member to ressurect")
 async def alivePlayer(interaction: discord.Interaction,member: discord.Member): #Marks a player as alive and announced it to all players
     await interaction.response.defer(thinking=True,ephemeral=True)
-    
-    if checkLockingGuild(interaction.guild):    
-        await pleaseWaitResponse(interaction,True)
-        return
+    await commandLock.acquire()
 
     if not gameState.active:
         await interaction.edit_original_response(content=f"Requires a game to be running")
@@ -924,12 +883,44 @@ async def alivePlayer(interaction: discord.Interaction,member: discord.Member): 
     if not (member in gameState.getPlayers(interaction.guild)):
         await interaction.edit_original_response(content=f"{member} is not listed as a player")
         return
-    
-    claimLockingGuild(interaction.guild)
+
     await alivePlayers(interaction.guild,[member])
-    yeildLockingGuid(interaction.guild)    
 
     await gameState.channels.getTownText().send(f"{member} is alive!")
+    commandLock.release()
+    
+"""
+async def handleMemberJoinPublic(member: discord.Member, channel: discord.VoiceChannel, guild: discord.Guild): #Handle member joining a public room
+    await voiceStateLock.acquire()
+    gossipRole = get(guild.roles, name=Role.player.value)
+    if gameState.channelLocks.isRoomLocked(channel): #if the room is locked
+        #Deny the user permission to be undefeaned in public rooms
+        if gossipRole in member.roles():
+            
+    else:
+"""
+    
+
+"""
+Called whenver a member changes their voice state:
+    - When a member joins a voice channel
+    - When a member leaves a voice channel
+    - When a member is muted or deafened on their own accord
+    - When a member is muted or deafened by an admin (such as this bot)
+"""
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    print(f"Member: {member} moved from voicestate {before} to {after}")
+    
+    #handle previous channel
+    if before.channel in gameState.channels.publicRooms : #we only care about controlling public rooms in the bot
+        if member in gameState.getPlayers(before.channel.guild): # Only control players
+            pass
+    
+    #handle new channel
+    if after.channel in gameState.channels.publicRooms : #we only care about controlling public rooms in the bot
+        if member in gameState.getPlayers(after.channel.guild): # Only control players
+            pass
     
     
 
