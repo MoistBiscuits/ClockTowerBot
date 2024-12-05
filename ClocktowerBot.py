@@ -12,6 +12,7 @@ from discord.utils import get
 from dotenv import load_dotenv
 from interactions import interaction
 from typing import List
+from typing import TypedDict
 import asyncio
 import logging
 
@@ -57,6 +58,7 @@ class GameState: #Class the holds the users set for the game
         self.active = False #Whever the game is running or not
         self.channelReady = False #Whever the correct discord channels are in place
         self.channels = GameChannels() #Store game channels here
+        self.channelLocks = ChannelLocks() #Stores player rights to talk in public rooms
         self.playerChannelDict = {} #Dictionary to stores which players have which private room
         self.gameDay = 1 #Determines which day the game is set,
         """
@@ -155,7 +157,7 @@ class GameState: #Class the holds the users set for the game
         elif self.dayPhase == 3: #dusk
             return f"It is the dusk of Day {self.gameDay}, all players gather in the town square for nominations"
         else: #error state, should never be reached
-            raise Exception(f"Expect dayPhase to be in range (0,3) got {self.dayPhase}") 
+            raise Exception(f"Expect dayPhase to be in range (0,3) got {self.dayPhase}")
         
     
 class GameChannels: #Holds the discord channels for use in the game
@@ -178,6 +180,50 @@ class GameChannels: #Holds the discord channels for use in the game
             
     def getTownText(self) -> discord.TextChannel:
         return self.townText
+    
+#Dictionary types
+RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
+RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
+
+"""
+Public rooms in the bot are designed so that once users join a private room, it prevents other users joining later from listening in
+This is done so players can have private conservsations aka whisper to eachother, a vital part of the game
+The class holds which channels are locked and which users are allowed to speak undeafened in them
+"Locking" a room in this context refers to deafening non-whitelisted members
+"""
+class ChannelLocks: #Holds the data on which discord channels auto deafen users when they join
+    def __init__(self, roomLock: RoomLock = dict(), roomMembers: RoomMembers = dict()):
+        self.roomLock = roomLock #Dict (channel -> bool) if a channel is in the lcoked state, new users are forced deafened
+        self.roomMembers = roomMembers #Dict (channel -> [members]) which users are allowed to speak in the channel
+        
+    def lockRoom(self,room: discord.VoiceChannel,members: List[discord.Member]): #Lock a room, and set a list of members to be those who cna use it
+        if (room in self.roomLock) and (room in self.roomMembers):
+            self.roomLock[room] = True
+            self.roomMembers[room] = members
+            
+    def unlockRoom(self,room: discord.VoiceChannel): #Unlock a room
+        if room in self.roomLock:
+            self.roomLock[room] = False
+            
+    def isRoomLocked(self,room: discord.VoiceChannel) -> bool: #Returns if room is lcoked
+        if room in self.roomLock:
+            return self.roomLock[room]
+        
+    def addMembersToRoom(self,room: discord.VoiceChannel,members: List[discord.Member]): #Adds members to a room that allows them to speak when it is locked, doesnt lock by itself
+        if room in self.roomMembers:
+            for member in members:
+                if not (member in self.roomMembers[room]):
+                    self.roomMembers[room].append(member)
+                    
+    def removeMembersToRoom(self,room: discord.VoiceChannel,members: List[discord.Member]): #removes members 
+        if room in self.roomMembers:
+            for member in members:
+                if member in self.roomMembers[room]:
+                    self.roomMembers[room].remove(member)
+                    
+    def getWhitelistedMembers(self,room:discord.VoiceChannel) -> List[discord.Member]: #Returns which users are allowed to talk in a room if it is locked
+        if room in self.roomMembers:
+            return self.roomMembers[room]        
                
 gameState = GameState() # public game state
 commandLockingGuilds = []
@@ -412,7 +458,7 @@ def getInitRoomName(playerNumber: int): #Returns the name of a private room that
         "White Room",
     ]
     name = privateRoomNames[playerNumber % len(privateRoomNames)]
-    #TODO find a cleaner way to needing more room names that expected players
+    #TODO find a cleaner way to needing more room names than expected players
     if playerNumber >= len(privateRoomNames): #If list overflows
         name += " "
         name += str(playerNumber // len(privateRoomNames)) #Append a unique number to it (e.g. Blue Room 2)
@@ -441,7 +487,15 @@ async def createPublicVoice(interaction: discord.Interaction,count=8): #Creates 
         }
         room = await interaction.guild.create_voice_channel(name=ChannelNames.dayRooms.value[i], overwrites=overwrites, category=gameState.channels.category)
         gameState.channels.addPublicRoom(room)
- 
+
+def setupChannelLocks(channels: List[discord.VoiceChannel]):
+    roomLock = {}
+    roomMembers = {}
+    for channel in channels:
+        roomLock[channel] = True
+        roomMembers[channel] = []
+    gameState.channelLocks = ChannelLocks(roomLock,roomMembers)
+
 @bot.tree.command(
     name="setup_channels",
     description="creates the channels needed for the game if they do not exist",
@@ -477,6 +531,9 @@ async def setupChannels(interaction: discord.Interaction): #Creates the text and
         await createTownVoice(interaction)
         await createPublicVoice(interaction,8)
         await createPrivateVoice(interaction,gameState.getPlayers(interaction.guild))
+        
+        setupChannelLocks(gameState.channels.publicRooms)
+        
         gameState.channelReady = True
         yeildLockingGuid(interaction.guild)
         await interaction.edit_original_response(content=f"Succesfully created channels")
