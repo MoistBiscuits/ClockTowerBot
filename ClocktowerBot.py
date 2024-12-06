@@ -2,7 +2,7 @@ from asyncio.windows_events import NULL
 from itertools import filterfalse
 import os
 import random
-from sqlite3 import connect
+from sqlite3 import Time, connect
 from tkinter.tix import INTEGER
 import discord
 import typing
@@ -11,9 +11,9 @@ from discord.ext import commands   # Import the discord.py extension "commands"
 from discord import Interaction, app_commands
 from discord.utils import get
 from dotenv import load_dotenv
-from interactions import interaction
 from typing import List
 from typing import TypedDict
+import time
 import asyncio
 import logging
 
@@ -67,6 +67,7 @@ class GameState: #Class the holds the users set for the game
         self.channels = GameChannels() #Store game channels here
         self.channelLocks = ChannelLocks() #Stores player rights to talk in public rooms
         self.playerChannelDict = {} #Dictionary to stores which players have which private room
+        self.lockCooldown = 5 #How much time (in secs) it takes for a newly joined public room to lock
         self.gameDay = 1 #Determines which day the game is set,
         """
         dayphase : Current phase of the day, each "day" begins at night, game sarts at the first night followed by the first day
@@ -166,6 +167,13 @@ class GameState: #Class the holds the users set for the game
         else: #error state, should never be reached
             raise Exception(f"Expect dayPhase to be in range (0,3) got {self.dayPhase}")
         
+    def filterPlayers(self,members: List[discord.Member]) -> List[discord.Member]: #Given a list of members, returns which are players
+        data = []
+        for member in members:
+            if (member in self.players) and (not (member in data)):
+                data.append(member)
+        return data
+        
     
 class GameChannels: #Holds the discord channels for use in the game
     def __init__(self):
@@ -199,10 +207,9 @@ class ChannelLocks: #Holds the data on which discord channels auto deafen users 
         self.roomLock = roomLock #Dict (channel -> bool) if a channel is in the lcoked state, new users are forced deafened
         self.roomMembers = roomMembers #Dict (channel -> [members]) which users are allowed to speak in the channel
         
-    def lockRoom(self,room: discord.VoiceChannel,members: List[discord.Member]): #Lock a room, and set a list of members to be those who cna use it
+    def lockRoom(self,room: discord.VoiceChannel): #Lock a room
         if (room in self.roomLock) and (room in self.roomMembers):
             self.roomLock[room] = True
-            self.roomMembers[room] = members
             
     def unlockRoom(self,room: discord.VoiceChannel): #Unlock a room
         if room in self.roomLock:
@@ -211,6 +218,8 @@ class ChannelLocks: #Holds the data on which discord channels auto deafen users 
     def isRoomLocked(self,room: discord.VoiceChannel) -> bool: #Returns if room is lcoked
         if room in self.roomLock:
             return self.roomLock[room]
+        else:
+            return False
         
     def addMembersToRoom(self,room: discord.VoiceChannel,members: List[discord.Member]): #Adds members to a room that allows them to speak when it is locked, doesnt lock by itself
         if room in self.roomMembers:
@@ -480,7 +489,7 @@ def setupChannelLocks(channels: List[discord.VoiceChannel]):
     roomLock = {}
     roomMembers = {}
     for channel in channels:
-        roomLock[channel] = True
+        roomLock[channel] = False
         roomMembers[channel] = []
     gameState.channelLocks = ChannelLocks(roomLock,roomMembers)
 
@@ -722,23 +731,27 @@ async def declareGamePhase(): #Bot states the phase of the game into chat
 async def startGame(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     await commandLock.acquire()
-    if gameState.active:
-        await interaction.edit_original_response(content=f"A game is already running, end it before starting a new one")
-        return
-    if not gameState.channelReady:
-        await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
-        return 
+    try:
+        if gameState.active:
+            await interaction.edit_original_response(content=f"A game is already running, end it before starting a new one")
+            return
+        if not gameState.channelReady:
+            await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
+            return 
 
-    await setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
+        await setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
     
-    await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers(interaction.guild)) #move all players to their private room
-    gameState.active = True    
+        await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers(interaction.guild)) #move all players to their private room
+        gameState.active = True    
 
-    await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
+        await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
     
-    await declareGamePhase() # Declare the time, the first night
+        await declareGamePhase() # Declare the time, the first night
+    except Exception as e:
+        print(e)
+    finally:
+        commandLock.release()
     
-    commandLock.release()
     
 @bot.tree.command(
     name="end_game",
@@ -889,17 +902,50 @@ async def alivePlayer(interaction: discord.Interaction,member: discord.Member): 
     await gameState.channels.getTownText().send(f"{member} is alive!")
     commandLock.release()
     
-"""
-async def handleMemberJoinPublic(member: discord.Member, channel: discord.VoiceChannel, guild: discord.Guild): #Handle member joining a public room
+async def lockChannelInSeconds(channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
+    time.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
+    #This command doesnt wait the exact amount of seconds, since there may be a delay to accquire rights to change channel permissions
+    await locker.acquire()
+    try:
+        #Channel might have changed in the time we waited, get updated version
+        recentChannel = bot.get_channel(channel.id)
+        if (len(gameState.filterPlayers(recentChannel.members)) != 0): #The room is not empty, lock it
+            print(f"Locking channel: {recentChannel.name} in {secs} seconds")
+            roamRole = get(recentChannel.guild.roles, name=Role.roam.value)
+            await recentChannel.set_permissions(roamRole,read_messages=True,connect=False) #Prevent roaming players from connecting
+            gameState.channelLocks.lockRoom(recentChannel)
+            print(f"Locked channel: {recentChannel.name}")
+        else:
+            print(f"Cancelled locking of channel: {channel.name}")
+    except:
+        print(f"locking is being cancelled")
+        raise
+    finally:
+        locker.release()
+
+async def handleMemberJoinPublic(member: discord.Member, channel: discord.VoiceChannel): #Handle member joining a public room
     await voiceStateLock.acquire()
-    gossipRole = get(guild.roles, name=Role.player.value)
-    if gameState.channelLocks.isRoomLocked(channel): #if the room is locked
-        #Deny the user permission to be undefeaned in public rooms
-        if gossipRole in member.roles():
+    if not gameState.channelLocks.isRoomLocked(channel): #if the room is open
+        gameState.channelLocks.addMembersToRoom(channel,[member])
+        if (len(gameState.filterPlayers(channel.members)) == 1): #If there is only one member in the chat
+            voiceStateLock.release()
             
-    else:
-"""
+            #Create an asynciio task to lock down this channel in a set amount of time
+            task = asyncio.create_task(lockChannelInSeconds(channel,voiceStateLock,gameState.lockCooldown))
+            await task
+            await voiceStateLock.acquire()
+    voiceStateLock.release()
     
+async def handleMemberLeavePublic(member: discord.Member, channel: discord.VoiceChannel): # Handle member leaving a public room
+    await voiceStateLock.acquire()
+    if gameState.channelLocks.isRoomLocked(channel): # if room is locked
+        print(f"{channel.members}")
+        if (len(gameState.filterPlayers(channel.members)) == 0): #The room is now empty
+            gameState.channelLocks.unlockRoom(channel)
+            roamRole = get(channel.guild.roles, name=Role.roam.value)
+            await channel.set_permissions(roamRole,read_messages=True,connect=True)
+    gameState.channelLocks.removeMembersToRoom(channel,[member])
+    voiceStateLock.release()
 
 """
 Called whenver a member changes their voice state:
@@ -910,17 +956,24 @@ Called whenver a member changes their voice state:
 """
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    print(f"Member: {member} moved from voicestate {before} to {after}")
+    print(f"Member: {member.name} moved from voicestate {before.channel} to {after.channel}")
+
+    if member in gameState.players: # Only control players
+        if before.channel == after.channel: #If users did not change channels or did not move to/from a channel
+            print(f"Player: {member.name} did not move to or from a channel")
+            return #We only care about moving to or from channels. not changes inside of channels
+
+        #handle previous channel
+        if before.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
+            print(f"Player: {member.name} left public room: {before.channel}")
+            await handleMemberLeavePublic(member,before.channel)
+            print("Done before")
     
-    #handle previous channel
-    if before.channel in gameState.channels.publicRooms : #we only care about controlling public rooms in the bot
-        if member in gameState.getPlayers(before.channel.guild): # Only control players
-            pass
-    
-    #handle new channel
-    if after.channel in gameState.channels.publicRooms : #we only care about controlling public rooms in the bot
-        if member in gameState.getPlayers(after.channel.guild): # Only control players
-            pass
+        #handle new channel
+        if after.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
+            print(f"Player: {member.name} entered public room: {after.channel}")
+            await handleMemberJoinPublic(member,after.channel)
+            print("Done after")
     
     
 
