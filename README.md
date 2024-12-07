@@ -36,7 +36,7 @@ Open up the terminal or command prompt in your repoistory and install the requir
 
 And finally run the bot using python
 
-`py ClocktowerBot.py`
+`python3 ClocktowerBot.py`
 
 ## How to use the bot
 
