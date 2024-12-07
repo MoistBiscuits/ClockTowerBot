@@ -23,8 +23,6 @@ handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w'
 RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
 RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
 
-
-
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
@@ -67,7 +65,8 @@ class GameState: #Class the holds the users set for the game
         self.channels = GameChannels() #Store game channels here
         self.channelLocks = ChannelLocks() #Stores player rights to talk in public rooms
         self.playerChannelDict = {} #Dictionary to stores which players have which private room
-        self.lockCooldown = 5 #How much time (in secs) it takes for a newly joined public room to lock
+        self.lockCooldown = 8 #How much time (in secs) it takes for a newly joined public room to lock
+        self.openCooldown = 12 # How much time (in secs) a public room is open when a user runs the /open_door command
         self.gameDay = 1 #Determines which day the game is set,
         """
         dayphase : Current phase of the day, each "day" begins at night, game sarts at the first night followed by the first day
@@ -902,15 +901,97 @@ async def alivePlayer(interaction: discord.Interaction,member: discord.Member): 
     await gameState.channels.getTownText().send(f"{member} is alive!")
     commandLock.release()
     
+@bot.tree.command(
+    name="open_door",
+    description="Lets other users join the public room you are in, until it closes automatically again"
+)
+async def openPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to open a locked public room they are in
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
+    try:
+        if not gameState.active:
+            await interaction.edit_original_response(content=f"Requires a game to be running")
+            return
+        if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
+            await interaction.edit_original_response(content=f"You are not a member of the currently running game")
+            return 
+        
+        channel = interaction.user.voice.channel        
+
+        if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
+            await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
+            return 
+        
+        if not gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is not locked
+            await interaction.edit_original_response(content=f"This room is already open")
+            return 
+        
+        #Open room now
+        await voiceStateLock.acquire()
+        gameState.channelLocks.unlockRoom(channel)
+        roamRole = get(channel.guild.roles, name=Role.roam.value)
+        await channel.set_permissions(roamRole,read_messages=True,connect=True)
+        voiceStateLock.release()
+        
+        await interaction.edit_original_response(content=f"Opened channel: {channel.name}")
+        commandLock.release() #Release command lock before waiting on the scheduled task
+        
+        #Create a task to close it again in the future, lock in openCooldown seconds (Usually longer than the default)
+        task = asyncio.create_task(lockChannelInSeconds(channel,voiceStateLock,gameState.openCooldown))
+        await commandLock.acquire()
+    except Exception as e:
+        print(e)
+    finally:
+        commandLock.release()
+        
+@bot.tree.command(
+    name="lock_door",
+    description="Prevents players from joining the public room you are in"
+)
+async def lockPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to lock an open public room they are in
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
+    try:
+        if not gameState.active:
+            await interaction.edit_original_response(content=f"Requires a game to be running")
+            return
+        if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
+            await interaction.edit_original_response(content=f"You are not a member of the currently running game")
+            return 
+        
+        channel = interaction.user.voice.channel        
+
+        if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
+            await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
+            return 
+        
+        if gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is locked
+            await interaction.edit_original_response(content=f"This room is already locked")
+            return 
+        
+        #lock room now
+        await voiceStateLock.acquire()
+        gameState.channelLocks.lockRoom(channel)
+        roamRole = get(channel.guild.roles, name=Role.roam.value)
+        await channel.set_permissions(roamRole,read_messages=True,connect=False)
+        voiceStateLock.release()
+        
+        await interaction.edit_original_response(content=f"Locked channel: {channel.name}")
+    except Exception as e:
+        print(e)
+    finally:
+        commandLock.release()
+    
+    
 async def lockChannelInSeconds(channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
-    time.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
+    print(f"Locking channel: {recentChannel.name} in {secs} seconds")
+    await asyncio.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
     #This command doesnt wait the exact amount of seconds, since there may be a delay to accquire rights to change channel permissions
     await locker.acquire()
     try:
         #Channel might have changed in the time we waited, get updated version
         recentChannel = bot.get_channel(channel.id)
         if (len(gameState.filterPlayers(recentChannel.members)) != 0): #The room is not empty, lock it
-            print(f"Locking channel: {recentChannel.name} in {secs} seconds")
             roamRole = get(recentChannel.guild.roles, name=Role.roam.value)
             await recentChannel.set_permissions(roamRole,read_messages=True,connect=False) #Prevent roaming players from connecting
             gameState.channelLocks.lockRoom(recentChannel)
@@ -932,7 +1013,6 @@ async def handleMemberJoinPublic(member: discord.Member, channel: discord.VoiceC
             
             #Create an asynciio task to lock down this channel in a set amount of time
             task = asyncio.create_task(lockChannelInSeconds(channel,voiceStateLock,gameState.lockCooldown))
-            await task
             await voiceStateLock.acquire()
     voiceStateLock.release()
     
