@@ -18,7 +18,7 @@ This discord bot allows the creation and running of blood on the Clocktower game
 ## How to setup your own instance of the bot
 
 You will need:
-- Python version 3.11 or greater
+- Python version 3.11 or greater (Get it here: https://www.python.org/downloads/)
 - Your own Discord bot with it's own token (Find our more here: https://discord.com/developers/docs/intro)
 
 First: clone this repository onto your own machine
