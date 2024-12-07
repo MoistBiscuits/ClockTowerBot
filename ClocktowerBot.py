@@ -257,25 +257,30 @@ async def pleaseWaitResponse(interaction: discord.Interaction, edit: bool = Fals
     
 @bot.tree.command(name="ping")
 async def ping(interaction: discord.Interaction): # a slash command will be created with the name "ping"
-    await interaction.response.send_message(f"Pong! Latency is {bot.latency}")
+    await interaction.response.send_message(content=f"Pong! Latency is {bot.latency}",ephemeral=True)
 
 @bot.tree.command(
     name="setup_roles",
     description="Inits user roles for the bot",
 )
+@app_commands.checks.has_permissions(manage_roles=True)
+@app_commands.guild_only()
 async def setupRoles(interaction: discord.Interaction): # create roles used by the bot if they do not exist
+    await interaction.response.defer(thinking=True,ephemeral=True)
     for role in Role:
         if get(interaction.guild.roles, name=role.value):
             print(f"Role: {role.value} already exists")
         else:
             await interaction.guild.create_role(name=role.value, colour=discord.Colour(0x0062ff))
-    await interaction.response.send_message("Initialised roles")
+    await interaction.edit_original_response(content="Initialised roles")
      
 @bot.tree.command(
     name="set_story_teller",
     description="set which user is the story teller for the next game",
 )
 @app_commands.describe(member="The member to make the story teller")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_roles=True)
 async def setStoryTeller(interaction: discord.Interaction, member: discord.Member): # Set who is the storyteller for a unactive game
     await interaction.response.defer(thinking=True)
     await commandLock.acquire()
@@ -307,6 +312,8 @@ async def setStoryTeller(interaction: discord.Interaction, member: discord.Membe
     description="Add a player to the next game",
 )
 @app_commands.describe(member="The member to add")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_roles=True)
 async def addPlayer(interaction: discord.Interaction, member: discord.Member): # add one player to an active game
     await interaction.response.defer(thinking=True)
     await commandLock.acquire()
@@ -336,6 +343,8 @@ async def addPlayer(interaction: discord.Interaction, member: discord.Member): #
     description="Remove a player from the next game",
 )
 @app_commands.describe(member="The member to remove")
+@app_commands.checks.has_permissions(manage_roles=True)
+@app_commands.guild_only()
 async def removePlayer(interaction: discord.Interaction, member: discord.Member): # remove one player from an active game
     await interaction.response.defer(thinking=True)
     await commandLock.acquire()
@@ -361,6 +370,7 @@ async def removePlayer(interaction: discord.Interaction, member: discord.Member)
     name="player_list",
     description="Show the players in a game",
 )
+@app_commands.guild_only()
 async def printGameState(interaction: discord.Interaction): #Print game state for testing TODO make this pretty
     await interaction.response.send_message(f"{gameState}")
     
@@ -368,6 +378,8 @@ async def printGameState(interaction: discord.Interaction): #Print game state fo
     name="sync_roles",
     description="Syncs the bot to the bot-specific roles on the server and removes excess roles",
 )
+@app_commands.checks.has_permissions(manage_roles=True)
+@app_commands.guild_only()
 async def syncRoles(interaction: discord.Interaction): #Sync the discord roles to the bots game state, if possible
     global gameState
     
@@ -496,6 +508,8 @@ def setupChannelLocks(channels: List[discord.VoiceChannel]):
     name="setup_channels",
     description="creates the channels needed for the game if they do not exist",
 )
+@app_commands.checks.has_permissions(manage_roles=True)
+@app_commands.guild_only()
 async def setupChannels(interaction: discord.Interaction): #Creates the text and voice channels for the bot#
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -727,6 +741,8 @@ async def declareGamePhase(): #Bot states the phase of the game into chat
     name="start_game",
     description="Starts a BoTC game: setup players, storyteller and channel first"
 )
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def startGame(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     await commandLock.acquire()
@@ -763,6 +779,8 @@ async def startGame(interaction: discord.Interaction):
     app_commands.Choice(name="None", value="The game is over!"),
 ])
 @app_commands.describe(reason="The reason the game is over (optional)")
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[str] = None): #Ends an active game, with a given reason
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -793,6 +811,8 @@ async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[
 ])
 @app_commands.describe(time="The next phase to skip the game to (optional)")
 @app_commands.describe(time="The day number to skip the game to (optional)")
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Choice[int] = None, day: int = None):
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -826,6 +846,8 @@ async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Cho
     name="retry_player_movement",
     description="Attempts to move all players according to the day phase"
 )
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def retryPlayerMovement(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -858,6 +880,8 @@ async def killPlayerWithReason(interaction: discord.Interaction, member: discord
 ])
 @app_commands.describe(member="The member to kill")
 @app_commands.describe(reason="The given announced reason (optional)")
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def killPlayer(interaction: discord.Interaction, member: discord.Member, reason: app_commands.Choice[str] = None): #Marks that a player is dead and announces the death to all players
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -884,6 +908,8 @@ async def killPlayer(interaction: discord.Interaction, member: discord.Member, r
     description="Announce and marks that a player is alive, used for certain player abilities"
 )
 @app_commands.describe(member="The member to ressurect")
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
 async def alivePlayer(interaction: discord.Interaction,member: discord.Member): #Marks a player as alive and announced it to all players
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -905,6 +931,8 @@ async def alivePlayer(interaction: discord.Interaction,member: discord.Member): 
     name="open_door",
     description="Lets other users join the public room you are in, until it closes automatically again"
 )
+@app_commands.guild_only()
+@app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
 async def openPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to open a locked public room they are in
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -948,6 +976,8 @@ async def openPublicRoomCommand(interaction: discord.Interaction): #Allows a mem
     name="lock_door",
     description="Prevents players from joining the public room you are in"
 )
+@app_commands.guild_only()
+@app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
 async def lockPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to lock an open public room they are in
     await interaction.response.defer(thinking=True,ephemeral=True)
     await commandLock.acquire()
@@ -984,7 +1014,7 @@ async def lockPublicRoomCommand(interaction: discord.Interaction): #Allows a mem
     
     
 async def lockChannelInSeconds(channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
-    print(f"Locking channel: {recentChannel.name} in {secs} seconds")
+    print(f"Locking channel: {channel.name} in {secs} seconds")
     await asyncio.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
     #This command doesnt wait the exact amount of seconds, since there may be a delay to accquire rights to change channel permissions
     await locker.acquire()
@@ -1055,7 +1085,34 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             await handleMemberJoinPublic(member,after.channel)
             print("Done after")
     
-    
+#Handle MissingPermissions exceptions raise from commands that require a permission/role
+#TODO this just FEELS wrong to write out all the decorators like this. but I cant find a better soloution
+@setupRoles.error
+@setStoryTeller.error
+@addPlayer.error
+@removePlayer.error
+@syncRoles.error
+@setupChannels.error
+@startGame.error
+@endGame.error
+@nextGamePhase.error
+@retryPlayerMovement.error
+@killPlayer.error
+@alivePlayer.error
+@openPublicRoomCommand.error
+@lockPublicRoomCommand.error
+async def missingPermisionError(interaction: discord.Interaction,error):
+    if isinstance(error, app_commands.checks.MissingPermissions):
+        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+    elif isinstance(error, app_commands.MissingRole):
+        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+    elif isinstance(error, commands.MissingRole):
+        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+    elif isinstance(error, commands.MissingPermissions):
+        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
 
 #Run the bot
 bot.run(TOKEN,log_handler=handler,log_level=logging.DEBUG)
