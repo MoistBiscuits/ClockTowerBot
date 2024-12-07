@@ -268,7 +268,7 @@ async def setupRoles(interaction: discord.Interaction): # create roles used by t
     await interaction.edit_original_response(content="Initialised roles")
      
 @bot.tree.command(
-    name="set_story_teller",
+    name="set_storyteller",
     description="set which user is the story teller for the next game",
 )
 @app_commands.describe(member="The member to make the story teller")
