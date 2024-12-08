@@ -18,7 +18,7 @@ This discord bot allows the creation and running of blood on the Clocktower game
 ## How to setup your own instance of the bot
 
 You will need:
-- Python version 3.11 or greater
+- Python version 3.11 or greater (Get it here: https://www.python.org/downloads/)
 - Your own Discord bot with it's own token (Find our more here: https://discord.com/developers/docs/intro)
 
 First: clone this repository onto your own machine
@@ -36,7 +36,7 @@ Open up the terminal or command prompt in your repoistory and install the requir
 
 And finally run the bot using python
 
-`py ClocktowerBot.py`
+`python3 ClocktowerBot.py`
 
 ## How to use the bot
 
@@ -58,9 +58,9 @@ During the day, public channels will be opened and players can get into private 
 
 Run `/start_game` to begin the game, starting at the first night
 
-The rules of this version are nearly the exact same as the physical version, except on a different medium
+The rules of this version are nearly the exact same as the physical version, except on a different medium. Instead of using he grimore at night to communcate with players, the storyteller visits the players private channel to talk with the directly. During the day players can use the automatic public channels created by the bot to get into public conversations. The channels automatically close once players join them to prevent other players from snooping in.
 
-THe storyteller has fully access to each of the channels, they can use the command `/advance_phase` to porgress the game in its phases, just like the board game
+The storyteller has fully access to each of the channels, they can use the command `/advance_phase` to porgress the game in its phases, just like the board game
 
 Every day has 4 phases, starting at night which the storyteller can advance the game through:
 - At night, players are in a private room, the storyteller can visit them in secret
