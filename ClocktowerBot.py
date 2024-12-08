@@ -260,8 +260,11 @@ class CharacterData: #handles the reading of characters.xml and outputs characte
                     embed.add_field(name="Character",value=characterName,inline=False)
                     embed.add_field(name="Ability",value=character.find('summary').text,inline=False)
                     embed.add_field(name="Type",value=character.find('type').text,inline=False)
-                    embed.set_footer(text=f"Wiki link: {character.find('wiki').text}")
+                    embed.add_field(name="Wiki link",value=f"[Character info]({character.find('wiki').text})")
                     
+                    if character.find('image').text != "None":
+                        embed.set_thumbnail(url=character.find('image').text)
+
                     return embed
         return None
         
