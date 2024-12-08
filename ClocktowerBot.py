@@ -2,7 +2,7 @@ import os
 import discord
 from enum import Enum
 from discord.ext import commands   # Import the discord.py extension "commands"
-from discord import Interaction, app_commands
+from discord import Embed, Interaction, app_commands
 from discord.utils import get
 from dotenv import load_dotenv
 from typing import List
@@ -360,12 +360,64 @@ async def removePlayer(interaction: discord.Interaction, member: discord.Member)
             commandLock.release()
      
 @bot.tree.command(
-    name="player_list",
-    description="Show the players in a game",
+    name="show_game",
+    description="Show the current state of the bot",
 )
 @app_commands.guild_only()
-async def printGameState(interaction: discord.Interaction): #Print game state for testing TODO make this pretty
-    await interaction.response.send_message(f"{gameState}")
+async def printGameState(interaction: discord.Interaction): #Print game state for testing
+    await interaction.response.defer(thinking=True)
+    await commandLock.acquire()
+    try:
+        embed = discord.embeds.Embed()
+        embed.colour = discord.Color.brand_red()
+        
+        #Storyteller field
+        if (gameState.storyteller != None):
+            embed.add_field(name="Storyteller: ",value=f"<@{gameState.storyteller.id}>",inline=False)
+        else:
+            embed.add_field(name="Storyteller: ",value=f"No one is set as storyteller yet",inline=False)
+
+        if (gameState.active == False): #If the game is not currently active
+            embed.title = f"Current Users for the next game"
+            
+            #Players field
+            embed.add_field(name="**-Players-**",value="",inline=False)       
+            if (len(gameState.players) > 0): #We have some players set
+                for i in range(0, len(gameState.players)):
+                    embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}>",inline=False)
+            else: #No Players
+                embed.add_field(name="No players have been added",value="",inline=False)
+                
+            if gameState.channelReady:
+                embed.set_footer(text=f"Run /start_game to start the game when ready")
+            else:
+                embed.set_footer(text=f"Once all players and storyteller are added, run /setup_channels to prepare the game")
+        else: #If the game is active
+            embed.title = "Current game"
+            
+            #Players field
+            embed.add_field(name="**Players**",value="",inline=False)
+            aliveRole = get(interaction.guild.roles, name=Role.alive.value)
+            deadRole = get(interaction.guild.roles, name=Role.dead.value)
+            if (len(gameState.players) > 0): #We have some players set
+                for i in range(0, len(gameState.players)):
+                    if (aliveRole in gameState.players[i].roles):
+                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :bust_in_silhouette:",inline=False)
+                    elif (deadRole in gameState.players[i].roles):
+                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :skull:",inline=False)
+                    else:
+                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}>",inline=False)
+                        
+            else: #No Players
+                embed.add_field(name="No players have been added",value="",inline=False)
+                
+            embed.set_footer(text=f"Player list is cyclic: Player 1 and Player {len(gameState.players) + 1} are neighbours")
+        await interaction.edit_original_response(embed=embed)
+    except Exception as e:
+         print("Exception has occured while printing game state:",e)
+         await interaction.edit_original_response(content="Something went wrong")
+    finally:
+        commandLock.release()
     
 @bot.tree.command(
     name="sync_roles",
