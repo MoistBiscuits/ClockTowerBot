@@ -1,0 +1,137 @@
+<?xml version="1.0"?>
+<data>
+  <edition name="Trouble Brewing">
+    <character name="Washerwoman">
+      <summary>You start knowing that 1 of 2 players is a particular Townsfolk.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Washerwoman</wiki>
+      <image>None</image>
+    </character>
+    <character name="Librarian">
+      <summary>You start knowing that 1 of 2 players is a particular Outsider. (Or that zero are in play.)</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Librarian</wiki>
+      <image>None</image>
+    </character>
+    <character name="Investigator">
+      <summary>You start knowing that 1 of 2 players is a particular Minion</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Investigator</wiki>
+      <image>None</image>
+    </character>
+    <character name="Chef">
+      <summary>You start knowing how many pairs of evil players there are.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Chef</wiki>
+      <image>None</image>
+    </character>
+    <character name="Empath">
+      <summary>Each night, you learn how many of your 2 alive neighbors are evil.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Empath</wiki>
+      <image>None</image>
+    </character>
+    <character name="Fortune Teller">
+      <summary>Each night, choose 2 players: you learn if either is a Demon. There is a good player that registers as a Demon to you.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Fortune_Teller</wiki>
+      <image>None</image>
+    </character>
+    <character name="Undertaker">
+      <summary>Each night*, you learn which character died by execution today.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Undertaker</wiki>
+      <image>None</image>
+    </character>
+    <character name="Monk">
+      <summary>Each night*, choose a player (not yourself): they are safe from the Demon tonight</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Monk</wiki>
+      <image>None</image>
+    </character>
+    <character name="Ravenkeeper">
+      <summary>If you die at night, you are woken to choose a player: you learn their character</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Ravenkeeper</wiki>
+      <image>None</image>
+    </character>
+    <character name="Virgin">
+      <summary>The 1st time you are nominated, if the nominator is a Townsfolk, they are executed immediately.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Virgin</wiki>
+      <image>None</image>
+    </character>
+    <character name="Slayer">
+      <summary>Once per game, during the day, publicly choose a player: if they are the Demon, they die.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Slayer</wiki>
+      <image>None</image>
+    </character>
+    <character name="Soldier">
+      <summary>You are safe from the Demon. (They cannot kill you &amp; you are immune to their harmful effects.)</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Soldier</wiki>
+      <image>None</image>
+    </character>
+    <character name="Mayor">
+      <summary>If only 3 players live &amp; no execution occurs, your team wins. If you die at night, another player might die instead.</summary>
+      <type>Townsfolk</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Mayor</wiki>
+      <image>None</image>
+    </character>
+    <character name="Butler">
+      <summary>Each night, choose a player (not yourself): tomorrow, you may only vote if they are voting too.</summary>
+      <type>Outsider</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Bulter</wiki>
+      <image>None</image>
+    </character>
+    <character name="Saint">
+      <summary>If you die by execution, your team loses.</summary>
+      <type>Outsider</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Saint</wiki>
+      <image>None</image>
+    </character>
+    <character name="Recluse">
+      <summary>You might register as evil &amp; as a Minion or Demon, even if dead.</summary>
+      <type>Outsider</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Recluse</wiki>
+      <image>None</image>
+    </character>
+    <character name="Drunk">
+      <summary>You do not know you are the Drunk. You think you are a Townsfolk character, but you are not.</summary>
+      <type>Outsider</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Drunk</wiki>
+      <image>None</image>
+    </character>
+    <character name="Poisoner">
+      <summary>Each night, choose a player: they are poisoned tonight and tomorrow day.</summary>
+      <type>Minion</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Poisoner</wiki>
+      <image>None</image>
+    </character>
+    <character name="Spy">
+      <summary>Each night, you see the Grimoire. You might register as good &amp; as a Townsfolk or Outsider, even if dead.</summary>
+      <type>Minion</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Spy</wiki>
+      <image>None</image>
+    </character>
+    <character name="Baron">
+      <summary>There are extra Outsiders in play. [+2 Outsiders]</summary>
+      <type>Minion</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Baron</wiki>
+      <image>None</image>
+    </character>
+    <character name="Scarlet Woman">
+      <summary>If there are 5 or more players alive &amp; the Demon dies, you become the Demon. (Travellers don't count</summary>
+      <type>Minion</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Scarlet_Woman</wiki>
+      <image>None</image>
+    </character>
+    <character name="Imp">
+      <summary>Each night*, choose a player: they die. If you kill yourself this way, a Minion becomes the Imp.</summary>
+      <type>Demon</type>
+      <wiki>https://wiki.bloodontheclocktower.com/Imp</wiki>
+      <image>None</image>
+    </character>
+  </edition>
+</data>

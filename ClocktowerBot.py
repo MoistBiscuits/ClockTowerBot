@@ -9,16 +9,20 @@ from typing import List
 from typing import TypedDict
 import asyncio
 import logging
+import xml.etree.ElementTree as ET
 
+#logging
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 
 #Dictionary types
 RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
 RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
 
+#Bot token
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
+#Bot
 intents = discord.Intents.all()
 bot = commands.Bot(intents=intents,command_prefix="!")
 
@@ -229,7 +233,43 @@ class ChannelLocks: #Holds the data on which discord channels auto deafen users 
         if room in self.roomMembers:
             return self.roomMembers[room]
         
+class CharacterData: #handles the reading of characters.xml and outputs character data
+    def __init__(self,path: str):
+        #XML parser
+        self.tree = ET.parse(path) #Holds character lists for all the editions
+        self.choices = self.getChoices()
+        
+    def getChoices(self) -> List[app_commands.Choice]: #Retuns the slash command choices
+        root = self.tree.getroot()
+        choices = []
+        for edition in root.findall('edition'):
+            for character in edition.findall('character'):
+                choices.append(app_commands.Choice(name=character.attrib['name'],value=character.attrib['name']))
+        return choices
+    
+    def getEmbedOfCharacter(self,characterName: str) -> discord.Embed | None: #Gets a given character's information as a discord embed
+        root = self.tree.getroot()
+        embed = None
+        for edition in root.findall('edition'):
+            for character in edition.findall('character'):
+                if character.attrib['name'] == characterName: #If this is our character
+                    embed = discord.embeds.Embed()
+                    embed.colour = discord.Color.brand_red()
+                    
+                    embed.title = f"Character Summary"
+                    embed.add_field(name="Character",value=characterName,inline=False)
+                    embed.add_field(name="Ability",value=character.find('summary').text,inline=False)
+                    embed.add_field(name="Type",value=character.find('type').text,inline=False)
+                    embed.set_footer(text=f"Wiki link: {character.find('wiki').text}")
+                    
+                    return embed
+        return None
+        
+                    
+                    
+        
 gameState = GameState() # public game state
+characterData = CharacterData('characters.xml') #public Handler reading and dsplay of character roles
 commandLock = asyncio.Lock() #Asyncio lock that handles discord command execution
 voiceStateLock = asyncio.Lock() #Asyncio lock that handles member join channel events
 
@@ -1056,7 +1096,43 @@ async def lockPublicRoomCommand(interaction: discord.Interaction): #Allows a mem
         print(e)
     finally:
         commandLock.release()
-    
+        
+@bot.tree.command(
+    name="character",
+    description="Prints information and rules on a given character role"
+)
+@app_commands.choices(character=characterData.choices)
+@app_commands.guild_only()
+async def declareCharacter(interaction: discord.Interaction, character: app_commands.Choice[str]): #Prints in chat the summary of a character role
+    await interaction.response.defer(thinking=True)
+    try:
+        embed = characterData.getEmbedOfCharacter(character.value)
+        if embed != None:
+            await interaction.edit_original_response(embed=embed)
+        else:
+            await interaction.edit_original_response(content="Could not find character")
+    except Exception as e:
+        print(e)
+        
+@bot.tree.command(
+    name="you_are_the",
+    description="Used by the storyteller to tell players their character"
+)
+@app_commands.choices(character=characterData.choices)
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
+async def youAreTheCharacter(interaction: discord.Interaction, character: app_commands.Choice[str]): #Just like /character except it declares what character a plaer is
+    await interaction.response.defer(thinking=True)
+    try:
+        embed = characterData.getEmbedOfCharacter(character.value)
+        if embed != None:
+            embed.title = "You are the:"
+            await interaction.edit_original_response(embed=embed)
+        else:
+            await interaction.edit_original_response(content="Could not find character")
+    except Exception as e:
+        print(e)
+
     
 async def lockChannelInSeconds(channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
     print(f"Locking channel: {channel.name} in {secs} seconds")
@@ -1146,6 +1222,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 @alivePlayer.error
 @openPublicRoomCommand.error
 @lockPublicRoomCommand.error
+@youAreTheCharacter.error
 async def missingPermisionError(interaction: discord.Interaction,error):
     if isinstance(error, app_commands.checks.MissingPermissions):
         await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
