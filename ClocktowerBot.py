@@ -787,6 +787,14 @@ async def movePlayersToTown(guild: discord.Guild, members: List[discord.Member])
             await member.move_to(town) #move them to their channel 
         except Exception as e:
             print(e)    
+            
+async def movePlayersToStorytellerPrivate(guild: discord.Guild, members: List[discord.Member]):#Moves players to storytellers corner
+    corner = gameState.channels.storytellerVoice
+    for member in members:
+        try: #Try to move them from current vc to new vc, fails is user is in no vc
+            await member.move_to(corner) #move them to their channel 
+        except Exception as e:
+            print(e)  
 
 async def allowPlayersRoam(guild: discord.Guild, members: List[discord.Member]): #Give players the Roam role, lets them visit public rooms
     try:
@@ -898,7 +906,7 @@ async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[
         app_commands.Choice(name="Dusk", value=3),
 ])
 @app_commands.describe(time="The next phase to skip the game to (optional)")
-@app_commands.describe(time="The day number to skip the game to (optional)")
+@app_commands.describe(day="The day number to skip the game to (optional)")
 @app_commands.guild_only()
 @app_commands.checks.has_role('ctb-StoryTeller')
 async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Choice[int] = None, day: int = None):
@@ -955,6 +963,30 @@ async def killPlayerWithReason(interaction: discord.Interaction, member: discord
         await gameState.channels.getTownText().send(f"{member} is dead!")
     else:
         await gameState.channels.getTownText().send(f"{member} {reason}")
+        
+@bot.tree.command(
+    name="storyteller_private",
+    description="Moves a player to the story telllers private voice channel from the current voice channel"
+)
+@app_commands.describe(member="The member to move")
+@app_commands.guild_only()
+@app_commands.checks.has_role('ctb-StoryTeller')
+async def movePlayerToStortellerChannel(interaction: discord.Interaction, member: discord.Member): #Moves select player to the storyteller's channel
+    await interaction.response.defer(thinking=True,ephemeral=True)
+    await commandLock.acquire()
+    try:
+        if not gameState.active:
+            await interaction.edit_original_response(content=f"Requires a game to be running")
+            return
+        
+        if member.voice != None:
+            await movePlayersToStorytellerPrivate(interaction.guild,[member])
+        else:
+            await interaction.edit_original_response(content=f"Can't move {member.name}, they need to be connected to a voice channel first, its a discord limitation") 
+    except Exception as e:
+        print(e)
+    finally:
+        commandLock.release()    
 
 @bot.tree.command(
     name="kill_player",
