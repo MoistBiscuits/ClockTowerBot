@@ -981,6 +981,7 @@ async def movePlayerToStortellerChannel(interaction: discord.Interaction, member
         
         if member.voice != None:
             await movePlayersToStorytellerPrivate(interaction.guild,[member])
+            await interaction.edit_original_response(content=f"Moved {member.name} to {gameState.channels.storytellerVoice.name}")
         else:
             await interaction.edit_original_response(content=f"Can't move {member.name}, they need to be connected to a voice channel first, its a discord limitation") 
     except Exception as e:
