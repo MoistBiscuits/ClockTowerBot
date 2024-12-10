@@ -11,20 +11,9 @@ import asyncio
 import logging
 import xml.etree.ElementTree as ET
 
-#logging
-handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
-
 #Dictionary types
 RoomLock = TypedDict('Roomlock', {'channel': discord.VoiceChannel, 'locked': bool})
 RoomMembers = TypedDict('RoomUsers', {'channel': discord.VoiceChannel, 'members': List[discord.Member]})
-
-#Bot token
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-
-#Bot
-intents = discord.Intents.all()
-bot = commands.Bot(intents=intents,command_prefix="!")
 
 class Role(Enum): # Roles that are used to determine which channels players can use
     __order__ = 'storyTeller player day night roam alive dead'
@@ -170,7 +159,6 @@ class GameState: #Class the holds the users set for the game
                 data.append(member)
         return data
         
-    
 class GameChannels: #Holds the discord channels for use in the game
     def __init__(self):
         self.category = None #Category all the channels are grouped in
@@ -267,1010 +255,1022 @@ class CharacterData: #handles the reading of characters.xml and outputs characte
 
                     return embed
         return None
-        
-                    
-                    
-        
-gameState = GameState() # public game state
-characterData = CharacterData('characters.xml') #public Handler reading and dsplay of character roles
+   
+#logging
+handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+
+#locks
 commandLock = asyncio.Lock() #Asyncio lock that handles discord command execution
 voiceStateLock = asyncio.Lock() #Asyncio lock that handles member join channel events
 
-@bot.event
-async def on_ready(): #On bot startup
-    print(f"Logged in as {bot.user.name}")
-    try:
-        synced = await bot.tree.sync() #Sync slash command to the server
-        print(f"Synced {len(synced)} commands.")
-    except Exception as e:
-        print("Exception has occured while syncing tree:",e)
+gameState = GameState() # public game state
+characterData = CharacterData('characters.xml') #public Handler reading and dsplay of character roles
 
-async def pleaseWaitResponse(interaction: discord.Interaction, edit: bool = False):
-    if edit:
-        await interaction.edit_original_response(content=f"Currently processing another command in this server, please wait")
-    else:
-        await interaction.response.send_message("Currently processing another command in this server, please wait")
-    
-@bot.tree.command(name="ping")
-async def ping(interaction: discord.Interaction): # a slash command will be created with the name "ping"
-    await interaction.response.send_message(content=f"Pong! Latency is {bot.latency}",ephemeral=True)
+#Bot token
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
 
-@bot.tree.command(
-    name="setup_roles",
-    description="Inits user roles for the bot",
-)
-@app_commands.checks.has_permissions(manage_roles=True)
-@app_commands.guild_only()
-async def setupRoles(interaction: discord.Interaction): # create roles used by the bot if they do not exist
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    for role in Role:
-        if get(interaction.guild.roles, name=role.value):
-            print(f"Role: {role.value} already exists")
-        else:
-            await interaction.guild.create_role(name=role.value, colour=discord.Colour(0x0062ff))
-    await interaction.edit_original_response(content="Initialised roles")
+#Bot
+intents = discord.Intents.all()
+bot = commands.Bot(intents=intents,command_prefix="!")    
+
+class GameCommands(commands.Cog): #Cog that holds all the bots commands for running a clocktower game    
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_ready(self): #On bot startup
+        print(f"Logged in as {bot.user.name}")
+        try:
+            synced = await bot.tree.sync() #Sync slash command to the server
+            print(f"Synced {len(synced)} commands.")
+        except Exception as e:
+            print("Exception has occured while syncing tree:",e)
+
+    """
+    @bot.tree.command(name="ping")
+    async def ping(self,interaction: discord.Interaction): # a slash command will be created with the name "ping"
+        await interaction.response.send_message(content=f"Pong! Latency is {bot.latency}",ephemeral=True)
+    """
+        
+    @app_commands.command(
+        name="setup_roles",
+        description="Inits user roles for the bot",
+    )
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.guild_only()
+    async def setupRoles(self,interaction: discord.Interaction): # create roles used by the bot if they do not exist
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        for role in Role:
+            if get(interaction.guild.roles, name=role.value):
+                print(f"Role: {role.value} already exists")
+            else:
+                await interaction.guild.create_role(name=role.value, colour=discord.Colour(0x0062ff))
+        await interaction.edit_original_response(content="Initialised roles")
      
-@bot.tree.command(
-    name="set_storyteller",
-    description="set which user is the story teller for the next game",
-)
-@app_commands.describe(member="The member to make the story teller")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(manage_roles=True)
-async def setStoryTeller(interaction: discord.Interaction, member: discord.Member): # Set who is the storyteller for a unactive game
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    if (gameState.active):
-        await interaction.edit_original_response(content="You cannot change the storyteller during an active game")
-        commandLock.release()
-    else:
-        print(member)
-        try: #Roles might not exist
-            storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
-            if (member in gameState.players): #If new storyteller is a player
+    @app_commands.command(
+        name="set_storyteller",
+        description="set which user is the story teller for the next game",
+    )
+    @app_commands.describe(member="The member to make the story teller")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def setStoryTeller(self,interaction: discord.Interaction, member: discord.Member): # Set who is the storyteller for a unactive game
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        if (gameState.active):
+            await interaction.edit_original_response(content="You cannot change the storyteller during an active game")
+            commandLock.release()
+        else:
+            print(member)
+            try: #Roles might not exist
+                storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
+                if (member in gameState.players): #If new storyteller is a player
+                    playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
+                    if (playerRole in member.roles):
+                        await member.remove_roles(playerRole) #Remove the role
+                    gameState.removePlayer(member) #remove them from player list
+                if (gameState.storyteller != None): #If there was a previous storyteller, remove their role
+                    await gameState.storyteller.remove_roles(storyRole)
+                await member.add_roles(storyRole)
+                gameState.setStoryTeller(member)
+                await interaction.edit_original_response(content=f"{member} is now the storyteller")
+            except Exception as e:
+                print("Exception has occured while swappign storyteller:",e)
+                await interaction.edit_original_response(content="Something went wrong swapping storytellers")
+            finally:
+                commandLock.release()
+            
+    @app_commands.command(
+        name="add_player",
+        description="Add a player to the next game",
+    )
+    @app_commands.describe(member="The member to add")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def addPlayer(self,interaction: discord.Interaction, member: discord.Member): # add one player to an active game
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        if (member == gameState.storyteller):
+            await interaction.edit_original_response(content="You cannot make the storyteller a player")
+            commandLock.release()
+        elif (gameState.active):
+            await interaction.edit_original_response(content="You cannot add players during an active game")
+            commandLock.release()
+        else:
+            print(member)
+            try: #Roles might not exist
+                playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
+                if not (playerRole in member.roles):
+                    await member.add_roles(playerRole) #Give them the player role if they do not have it already
+                gameState.addPlayer(member) #Add player to game
+                gameState.channelReady = False #Change of players means a new channel setup must be made
+                await interaction.edit_original_response(content=f"Added player: {member} to the game")
+            except Exception as e:
+                print("Exception has occured while assigning players:",e)
+                await interaction.edit_original_response(content="Something went wrong assigning players")
+            finally:
+                commandLock.release()
+            
+    @app_commands.command(
+        name="remove_player",
+        description="Remove a player from the next game",
+    )
+    @app_commands.describe(member="The member to remove")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.guild_only()
+    async def removePlayer(self,interaction: discord.Interaction, member: discord.Member): # remove one player from an active game
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        if (gameState.active):
+            await interaction.response.edit_original_response(content="You cannot remove players during an active game")
+            commandLock.release()
+        else:
+            print(member)
+            try: #Roles might not exist
                 playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
                 if (playerRole in member.roles):
-                    await member.remove_roles(playerRole) #Remove the role
-                gameState.removePlayer(member) #remove them from player list
-            if (gameState.storyteller != None): #If there was a previous storyteller, remove their role
-                await gameState.storyteller.remove_roles(storyRole)
-            await member.add_roles(storyRole)
-            gameState.setStoryTeller(member)
-            await interaction.edit_original_response(content=f"{member} is now the storyteller")
-        except Exception as e:
-            print("Exception has occured while swappign storyteller:",e)
-            await interaction.edit_original_response(content="Something went wrong swapping storytellers")
-        finally:
-            commandLock.release()
-            
-@bot.tree.command(
-    name="add_player",
-    description="Add a player to the next game",
-)
-@app_commands.describe(member="The member to add")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(manage_roles=True)
-async def addPlayer(interaction: discord.Interaction, member: discord.Member): # add one player to an active game
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    if (member == gameState.storyteller):
-        await interaction.edit_original_response(content="You cannot make the storyteller a player")
-        commandLock.release()
-    elif (gameState.active):
-        await interaction.edit_original_response(content="You cannot add players during an active game")
-        commandLock.release()
-    else:
-        print(member)
-        try: #Roles might not exist
-            playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
-            if not (playerRole in member.roles):
-                await member.add_roles(playerRole) #Give them the player role if they do not have it already
-            gameState.addPlayer(member) #Add player to game
-            gameState.channelReady = False #Change of players means a new channel setup must be made
-            await interaction.edit_original_response(content=f"Added player: {member} to the game")
-        except Exception as e:
-            print("Exception has occured while assigning players:",e)
-            await interaction.edit_original_response(content="Something went wrong assigning players")
-        finally:
-            commandLock.release()
-            
-@bot.tree.command(
-    name="remove_player",
-    description="Remove a player from the next game",
-)
-@app_commands.describe(member="The member to remove")
-@app_commands.checks.has_permissions(manage_roles=True)
-@app_commands.guild_only()
-async def removePlayer(interaction: discord.Interaction, member: discord.Member): # remove one player from an active game
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    if (gameState.active):
-        await interaction.response.edit_original_response(content="You cannot remove players during an active game")
-        commandLock.release()
-    else:
-        print(member)
-        try: #Roles might not exist
-            playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
-            if (playerRole in member.roles):
-                 await member.remove_roles(playerRole) #Remove the role
-            gameState.removePlayer(member) #Remove player to game
-            gameState.channelReady = False #Change of players means a new channel setup must be made
-            await interaction.response.edit_original_response(content=f"Removed player: {member}")
-        except Exception as e:
-            print("Exception has occured while removing players:",e)
-            await interaction.response.edit_original_response(content="Something went wrong removing players")
-        finally:
-            commandLock.release()
+                     await member.remove_roles(playerRole) #Remove the role
+                gameState.removePlayer(member) #Remove player to game
+                gameState.channelReady = False #Change of players means a new channel setup must be made
+                await interaction.response.edit_original_response(content=f"Removed player: {member}")
+            except Exception as e:
+                print("Exception has occured while removing players:",e)
+                await interaction.response.edit_original_response(content="Something went wrong removing players")
+            finally:
+                commandLock.release()
      
-@bot.tree.command(
-    name="show_game",
-    description="Show the current state of the bot",
-)
-@app_commands.guild_only()
-async def printGameState(interaction: discord.Interaction): #Print game state for testing
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    try:
-        embed = discord.embeds.Embed()
-        embed.colour = discord.Color.brand_red()
+    @app_commands.command(
+        name="show_game",
+        description="Show the current state of the bot",
+    )
+    @app_commands.guild_only()
+    async def printGameState(self,interaction: discord.Interaction): #Print game state for testing
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        try:
+            embed = discord.embeds.Embed()
+            embed.colour = discord.Color.brand_red()
         
-        #Storyteller field
-        if (gameState.storyteller != None):
-            embed.add_field(name="Storyteller: ",value=f"<@{gameState.storyteller.id}>",inline=False)
-        else:
-            embed.add_field(name="Storyteller: ",value=f"No one is set as storyteller yet",inline=False)
-
-        if (gameState.active == False): #If the game is not currently active
-            embed.title = f"Current Users for the next game"
-            
-            #Players field
-            embed.add_field(name="**-Players-**",value="",inline=False)       
-            if (len(gameState.players) > 0): #We have some players set
-                for i in range(0, len(gameState.players)):
-                    embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}>",inline=False)
-            else: #No Players
-                embed.add_field(name="No players have been added",value="",inline=False)
-                
-            if gameState.channelReady:
-                embed.set_footer(text=f"Run /start_game to start the game when ready")
+            #Storyteller field
+            if (gameState.storyteller != None):
+                embed.add_field(name="Storyteller: ",value=f"<@{gameState.storyteller.id}>",inline=False)
             else:
-                embed.set_footer(text=f"Once all players and storyteller are added, run /setup_channels to prepare the game")
-        else: #If the game is active
-            embed.title = "Current game"
+                embed.add_field(name="Storyteller: ",value=f"No one is set as storyteller yet",inline=False)
+
+            if (gameState.active == False): #If the game is not currently active
+                embed.title = f"Current Users for the next game"
             
-            #Players field
-            embed.add_field(name="**Players**",value="",inline=False)
-            aliveRole = get(interaction.guild.roles, name=Role.alive.value)
-            deadRole = get(interaction.guild.roles, name=Role.dead.value)
-            if (len(gameState.players) > 0): #We have some players set
-                for i in range(0, len(gameState.players)):
-                    if (aliveRole in gameState.players[i].roles):
-                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :bust_in_silhouette:",inline=False)
-                    elif (deadRole in gameState.players[i].roles):
-                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :skull:",inline=False)
-                    else:
+                #Players field
+                embed.add_field(name="**-Players-**",value="",inline=False)       
+                if (len(gameState.players) > 0): #We have some players set
+                    for i in range(0, len(gameState.players)):
                         embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}>",inline=False)
-                        
-            else: #No Players
-                embed.add_field(name="No players have been added",value="",inline=False)
+                else: #No Players
+                    embed.add_field(name="No players have been added",value="",inline=False)
                 
-            embed.set_footer(text=f"Player list is cyclic: Player 1 and Player {len(gameState.players) + 1} are neighbours")
-        await interaction.edit_original_response(embed=embed)
-    except Exception as e:
-         print("Exception has occured while printing game state:",e)
-         await interaction.edit_original_response(content="Something went wrong")
-    finally:
-        commandLock.release()
-    
-@bot.tree.command(
-    name="sync_roles",
-    description="Syncs the bot to the bot-specific roles on the server and removes excess roles",
-)
-@app_commands.checks.has_permissions(manage_roles=True)
-@app_commands.guild_only()
-async def syncRoles(interaction: discord.Interaction): #Sync the discord roles to the bots game state, if possible
-    global gameState
-    
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    if gameState.active: #Changing the playlist mid-game will break things
-        await interaction.edit_original_response(content="You cannot change the game's state while a match is active")
-        commandLock.release()
-    else:
-        try: #Roles might not exist or calling members may fail
-            memberList = interaction.guild.fetch_members() #Get all the servers members, might be dangerous but this bot has a limited scope in users
-            newGameState = GameState()
-            playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
-            storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
-            async for member in memberList:
-                if (storyRole in member.roles) and (playerRole in member.roles): #A user is both storyteller and player
-                    await interaction.edit_original_response(content=f"{member} cannot be both a player and a storyteller")
-                    return
-                if (storyRole in member.roles) and (newGameState.storyteller != None): #If a user is set as storyteller while another is a storyteller
-                    await interaction.edit_original_response(content=f"{member} and {newGameState.storyteller} cannot be both be storytellers")
-                    return
-                if playerRole in member.roles:
-                    newGameState.addPlayer(member)
-                if storyRole in member.roles:
-                    newGameState.setStoryTeller(member)
-                    
-            gameState = newGameState #Update gamestate
-            gameState.channelReady = False #Change of players means a new channel setup must be made
-            await interaction.edit_original_response(content=f"Synced member roles to the bot successfully")
+                if gameState.channelReady:
+                    embed.set_footer(text=f"Run /start_game to start the game when ready")
+                else:
+                    embed.set_footer(text=f"Once all players and storyteller are added, run /setup_channels to prepare the game")
+            else: #If the game is active
+                embed.title = "Current game"
+            
+                #Players field
+                embed.add_field(name="**Players**",value="",inline=False)
+                aliveRole = get(interaction.guild.roles, name=Role.alive.value)
+                deadRole = get(interaction.guild.roles, name=Role.dead.value)
+                if (len(gameState.players) > 0): #We have some players set
+                    for i in range(0, len(gameState.players)):
+                        if (aliveRole in gameState.players[i].roles):
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :bust_in_silhouette:",inline=False)
+                        elif (deadRole in gameState.players[i].roles):
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}> :skull:",inline=False)
+                        else:
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{gameState.players[i].id}>",inline=False)
+                        
+                else: #No Players
+                    embed.add_field(name="No players have been added",value="",inline=False)
+                
+                embed.set_footer(text=f"Player list is cyclic: Player 1 and Player {len(gameState.players) + 1} are neighbours")
+            await interaction.edit_original_response(embed=embed)
         except Exception as e:
-            print("Exception has occured while syncing player roles:",e)
-            await interaction.edit_original_response(content="Something went wrong syncing roles")
+             print("Exception has occured while printing game state:",e)
+             await interaction.edit_original_response(content="Something went wrong")
         finally:
             commandLock.release()
+    
+    @app_commands.command(
+        name="sync_roles",
+        description="Syncs the bot to the bot-specific roles on the server and removes excess roles",
+    )
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.guild_only()
+    async def syncRoles(self,interaction: discord.Interaction): #Sync the discord roles to the bots game state, if possible
+        global gameState
+    
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        if gameState.active: #Changing the playlist mid-game will break things
+            await interaction.edit_original_response(content="You cannot change the game's state while a match is active")
+            commandLock.release()
+        else:
+            try: #Roles might not exist or calling members may fail
+                memberList = interaction.guild.fetch_members() #Get all the servers members, might be dangerous but this bot has a limited scope in users
+                newGameState = GameState()
+                playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
+                storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
+                async for member in memberList:
+                    if (storyRole in member.roles) and (playerRole in member.roles): #A user is both storyteller and player
+                        await interaction.edit_original_response(content=f"{member} cannot be both a player and a storyteller")
+                        return
+                    if (storyRole in member.roles) and (newGameState.storyteller != None): #If a user is set as storyteller while another is a storyteller
+                        await interaction.edit_original_response(content=f"{member} and {newGameState.storyteller} cannot be both be storytellers")
+                        return
+                    if playerRole in member.roles:
+                        newGameState.addPlayer(member)
+                    if storyRole in member.roles:
+                        newGameState.setStoryTeller(member)
+                    
+                gameState = newGameState #Update gamestate
+                gameState.channelReady = False #Change of players means a new channel setup must be made
+                await interaction.edit_original_response(content=f"Synced member roles to the bot successfully")
+            except Exception as e:
+                print("Exception has occured while syncing player roles:",e)
+                await interaction.edit_original_response(content="Something went wrong syncing roles")
+            finally:
+                commandLock.release()
             
-async def createStoryText(interaction: discord.Interaction): #Create storyteller text channel
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
-    overwrites = {
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        storyRole: discord.PermissionOverwrite(read_messages=True)
-    }
-    gameState.channels.storytellerText = await interaction.guild.create_text_channel(name=ChannelNames.storytellerText.value, overwrites=overwrites, category=gameState.channels.category)
-    
-async def createStoryVoice(interaction: discord.Interaction): #Create storyteller voice channel
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
-    overwrites = {
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        storyRole: discord.PermissionOverwrite(read_messages=True)
-    }
-    gameState.channels.storytellerVoice = await interaction.guild.create_voice_channel(name=ChannelNames.storytellerVoice.value, overwrites=overwrites, category=gameState.channels.category)
-    
-async def createTownText(interaction: discord.Interaction): #Create hub voice channel
-    dayRole = get(interaction.guild.roles, name=Role.day.value) #Get day role from server
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-    overwrites = {
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=True,send_messages=False),
-        dayRole: discord.PermissionOverwrite(send_messages=True),
-        storyRole: discord.PermissionOverwrite(send_messages=True)
-    }
-    gameState.channels.townText = await interaction.guild.create_text_channel(name=ChannelNames.townText.value, overwrites=overwrites, category=gameState.channels.category)
-    
-async def createTownVoice(interaction: discord.Interaction): #Create hub text channel
-    dayRole = get(interaction.guild.roles, name=Role.day.value) #Get day role from server
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-    overwrites = {
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        dayRole: discord.PermissionOverwrite(read_messages=True),
-        storyRole: discord.PermissionOverwrite(read_messages=True)
-    }
-    gameState.channels.townVoice = await interaction.guild.create_voice_channel(name=ChannelNames.townVoice.value, overwrites=overwrites, category=gameState.channels.category)
-
-def getInitRoomName(playerNumber: int): #Returns the name of a private room that should be used to create a players room
-    #Names used for each players private room
-    privateRoomNames=[
-        "Red Room",
-        "Blue Room",
-        "Yellow Room",
-        "Purple Room",
-        "Orange Room",
-        "Green Room",
-        "Cyan Room",
-        "Brown Room",
-        "Black Room",
-        "White Room",
-    ]
-    name = privateRoomNames[playerNumber % len(privateRoomNames)]
-    #TODO find a cleaner way to needing more room names than expected players
-    if playerNumber >= len(privateRoomNames): #If list overflows
-        name += " "
-        name += str(playerNumber // len(privateRoomNames)) #Append a unique number to it (e.g. Blue Room 2)
-    return name
-    
-async def createPrivateVoice(interaction: discord.Interaction, players: List[discord.Member]): #Create private rooms for each player
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-    for i in range(0,len(players)):
+    async def createStoryText(self,interaction: discord.Interaction): #Create storyteller text channel
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            players[i]: discord.PermissionOverwrite(read_messages=True),
             storyRole: discord.PermissionOverwrite(read_messages=True)
         }
-        room = await interaction.guild.create_voice_channel(name=getInitRoomName(i), overwrites=overwrites, category=gameState.channels.category)
-        gameState.channels.addPrivateRoom(room) # Add channel to channels
-        gameState.addPrivateRoom(players[i],room) # pair player to channel
-        
-async def createPublicVoice(interaction: discord.Interaction,count=8): #Creates the given amount of public rooms
-    storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
-    roamRole = get(interaction.guild.roles, name=Role.roam.value)
-    for i in range(0,count):
+        gameState.channels.storytellerText = await interaction.guild.create_text_channel(name=ChannelNames.storytellerText.value, overwrites=overwrites, category=gameState.channels.category)
+    
+    async def createStoryVoice(self,interaction: discord.Interaction): #Create storyteller voice channel
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
         overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False,connect=False),
-            roamRole: discord.PermissionOverwrite(read_messages=True,connect=True),
-            storyRole: discord.PermissionOverwrite(read_messages=True,connect=True)
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            storyRole: discord.PermissionOverwrite(read_messages=True)
         }
-        room = await interaction.guild.create_voice_channel(name=ChannelNames.dayRooms.value[i], overwrites=overwrites, category=gameState.channels.category)
-        gameState.channels.addPublicRoom(room)
-
-def setupChannelLocks(channels: List[discord.VoiceChannel]):
-    roomLock = {}
-    roomMembers = {}
-    for channel in channels:
-        roomLock[channel] = False
-        roomMembers[channel] = []
-    gameState.channelLocks = ChannelLocks(roomLock,roomMembers)
-
-@bot.tree.command(
-    name="setup_channels",
-    description="creates the channels needed for the game if they do not exist",
-)
-@app_commands.checks.has_permissions(manage_roles=True)
-@app_commands.guild_only()
-async def setupChannels(interaction: discord.Interaction): #Creates the text and voice channels for the bot#
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    if gameState.active:
-        await interaction.edit_original_response(content=f"Cannot setup channels during an active game")
-        commandLock.release()
-        return
-    if gameState.getPlayers(interaction.guild) == []:
-        await interaction.edit_original_response(content=f"Cannot setup channels with no added players")
-        commandLock.release()
-        return
-    try:
-        category = get(interaction.guild.categories,name=ChannelNames.category.value)
-        if category: # If category already exists delete it adn its channels
-            print(f"Category already exists, delete all channels inside and it")
-            channels = category.channels
-            for channel in channels:
-                await channel.delete()
-            await category.delete()
-            
-        #Create category
-        gameState.channels.category = await interaction.guild.create_category(ChannelNames.category.value)
-
-        #Create the channels needed for the game to run
-        await createStoryText(interaction)
-        await createStoryVoice(interaction)
-        await createTownText(interaction)
-        await createTownVoice(interaction)
-        await createPublicVoice(interaction,8)
-        await createPrivateVoice(interaction,gameState.getPlayers(interaction.guild))
-        
-        setupChannelLocks(gameState.channels.publicRooms)
-        
-        gameState.channelReady = True
-        await interaction.edit_original_response(content=f"Succesfully created channels")
-    except Exception as e:
-        print("Exception has occured while setting up channels:",e)
-        gameState.channelReady = False
-        await interaction.edit_original_response(content=f"Something went setting up channels")
-    finally:
-        commandLock.release()
+        gameState.channels.storytellerVoice = await interaction.guild.create_voice_channel(name=ChannelNames.storytellerVoice.value, overwrites=overwrites, category=gameState.channels.category)
     
-"""
-Sets the roles of a list of users
-guild - guild of the sver
-members - memers to change roles of
-roles - The bot specific roles to set to
-"""
-async def setRoles(guild:discord.Guild, members: List[discord.Member], roles: List[discord.Member]):
-    try:
-        excessRoleList = [
-            get(guild.roles, name=Role.alive.value),
-            get(guild.roles, name=Role.dead.value),
-            get(guild.roles, name=Role.day.value),
-            get(guild.roles, name=Role.night.value),
-            get(guild.roles, name=Role.roam.value),
+    async def createTownText(self,interaction: discord.Interaction): #Create hub voice channel
+        dayRole = get(interaction.guild.roles, name=Role.day.value) #Get day role from server
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=True,send_messages=False),
+            dayRole: discord.PermissionOverwrite(send_messages=True),
+            storyRole: discord.PermissionOverwrite(send_messages=True)
+        }
+        gameState.channels.townText = await interaction.guild.create_text_channel(name=ChannelNames.townText.value, overwrites=overwrites, category=gameState.channels.category)
+    
+    async def createTownVoice(self,interaction: discord.Interaction): #Create hub text channel
+        dayRole = get(interaction.guild.roles, name=Role.day.value) #Get day role from server
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            dayRole: discord.PermissionOverwrite(read_messages=True),
+            storyRole: discord.PermissionOverwrite(read_messages=True)
+        }
+        gameState.channels.townVoice = await interaction.guild.create_voice_channel(name=ChannelNames.townVoice.value, overwrites=overwrites, category=gameState.channels.category)
+
+    def getInitRoomName(self,playerNumber: int): #Returns the name of a private room that should be used to create a players room
+        #Names used for each players private room
+        privateRoomNames=[
+            "Red Room",
+            "Blue Room",
+            "Yellow Room",
+            "Purple Room",
+            "Orange Room",
+            "Green Room",
+            "Cyan Room",
+            "Brown Room",
+            "Black Room",
+            "White Room",
         ]
-        for member in members:
-            newRoles = member.roles
-            for role in excessRoleList:
-                if (role in newRoles):
-                    newRoles.remove(role)
-            for role in roles:
-                if not (role in newRoles):
-                    newRoles.append(role)
-            print(f"user: {member} roles {roles}")
-            await member.edit(roles=newRoles)
+        name = privateRoomNames[playerNumber % len(privateRoomNames)]
+        #TODO find a cleaner way to needing more room names than expected players
+        if playerNumber >= len(privateRoomNames): #If list overflows
+            name += " "
+            name += str(playerNumber // len(privateRoomNames)) #Append a unique number to it (e.g. Blue Room 2)
+        return name
+    
+    async def createPrivateVoice(self,interaction: discord.Interaction, players: List[discord.Member]): #Create private rooms for each player
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
+        for i in range(0,len(players)):
+            overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                players[i]: discord.PermissionOverwrite(read_messages=True),
+                storyRole: discord.PermissionOverwrite(read_messages=True)
+            }
+            room = await interaction.guild.create_voice_channel(name=self.getInitRoomName(i), overwrites=overwrites, category=gameState.channels.category)
+            gameState.channels.addPrivateRoom(room) # Add channel to channels
+            gameState.addPrivateRoom(players[i],room) # pair player to channel
         
-    except Exception as e:
-        raise e
-    
-async def alivePlayers(guild: discord.Guild, members: List[discord.Member]): #give players the alive role, remove dead role if they have it
-    try: #Roles might not exist or calling members may fail
-        aliveRole = get(guild.roles, name=Role.alive.value)
-        deadRole = get(guild.roles, name=Role.dead.value)
-        for member in members:
-            roles = member.roles
-            if deadRole in roles:
-                roles.remove(deadRole)
-            if not (aliveRole in member.roles):
-                roles.append(aliveRole)
-            await member.edit(roles=roles)
-    except Exception as e:
-        raise e
-    
-async def killPlayers(guild: discord.Guild, members: List[discord.Member]): #give players the dead role, remove alive role if they have it
-    try: #Roles might not exist or calling members may fail
-        aliveRole = get(guild.roles, name=Role.alive.value)
-        deadRole = get(guild.roles, name=Role.dead.value)
-        for member in members:
-            roles = member.roles
-            if aliveRole in roles:
-                roles.remove(aliveRole)
-            if not (deadRole in member.roles):
-                roles.append(deadRole)
-            await member.edit(roles=roles)
-    except Exception as e:
-        raise e
-    
-async def unlockPlayersPrivateRoom(guild: discord.Guild ,members: List[discord.Member]): #Give players permission to enter their private room
-    try: #Roles might not exist or calling members may fail
-        for member in members:
-            privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            await privateRoom.set_permissions(member,read_messages=True)
-    except Exception as e:
-        raise e
-    
-async def lockPlayersPrivateRoom(guild: discord.Guild,members: List[discord.Member]): #Remove players permission to enter their private room
-    try: #Roles might not exist or calling members may fail
-        for member in members:
-            privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            await privateRoom.set_permissions(member,read_messages=False)
-    except Exception as e:
-        raise e
+    async def createPublicVoice(self,interaction: discord.Interaction,count=8): #Creates the given amount of public rooms
+        storyRole = get(interaction.guild.roles, name=Role.storyTeller.value)
+        roamRole = get(interaction.guild.roles, name=Role.roam.value)
+        for i in range(0,count):
+            overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False,connect=False),
+                roamRole: discord.PermissionOverwrite(read_messages=True,connect=True),
+                storyRole: discord.PermissionOverwrite(read_messages=True,connect=True)
+            }
+            room = await interaction.guild.create_voice_channel(name=ChannelNames.dayRooms.value[i], overwrites=overwrites, category=gameState.channels.category)
+            gameState.channels.addPublicRoom(room)
 
-async def sendPlayersToPrivateRoom(guild: discord.Guild, members: List[discord.Member]): #give players the Night role, remove day and roam roles and send them to their private room
-    try: #Roles might not exist or calling members may fail
-        dayRole = get(guild.roles, name=Role.day.value)
-        nightRole = get(guild.roles, name=Role.night.value)
-        roamRole = get(guild.roles, name=Role.roam.value)
+    def setupChannelLocks(self,channels: List[discord.VoiceChannel]):
+        roomLock = {}
+        roomMembers = {}
+        for channel in channels:
+            roomLock[channel] = False
+            roomMembers[channel] = []
+        gameState.channelLocks = ChannelLocks(roomLock,roomMembers)
 
-        #Players need to be able to access their room to be sent to it
-        await unlockPlayersPrivateRoom(guild,members)        
-        
-        for member in members:
-            roles = member.roles
-            if dayRole in roles:
-                roles.remove(dayRole)
-            if roamRole in roles:
-                roles.remove(roamRole)
-            if not (nightRole in roles):
-                roles.append(nightRole)
-            await member.edit(roles=roles) #You must add roles atmoically or errors occour, it sucks
-    except Exception as e:
-        raise e
-    
-    for member in members:
-        try: #Try to move them from current vc to new vc, fails is user is in no vc
-            privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            await member.move_to(privateRoom) #move them to their channel 
-        except Exception as e:
-            print(e)
-    
-async def movePlayersToPrivateRoom(guild: discord.Guild, members: List[discord.Member]): #move players to their private room without changing roles
-    #Players need to be able to access their room to be sent to it
-    await unlockPlayersPrivateRoom(guild,members)    
-
-    for member in members:
-        try: #Try to move them from current vc to new vc, fails is user is in no vc
-            privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
-            await member.move_to(privateRoom) #move them to their channel 
-        except Exception as e:
-            print(e)
-
-async def sendPlayersToTown(guild: discord.Guild, members: List[discord.Member]): #Give players the Day Role, remove night and roam roles and force them into town
-    try: #Roles might not exist or calling members may fail
-        dayRole = get(guild.roles, name=Role.day.value)
-        nightRole = get(guild.roles, name=Role.night.value)
-        roamRole = get(guild.roles, name=Role.roam.value)
-
-        #Players should be blocked from their rooms
-        await lockPlayersPrivateRoom(guild, members)        
-
-        for member in members:
-            roles = member.roles
-            if nightRole in roles:
-                roles.remove(nightRole)
-            if roamRole in roles:
-                roles.remove(roamRole)
-            if not (dayRole in roles):
-                roles.append(dayRole)
-            await member.edit(roles=roles) #You must add roles atmoically or eronious errors occour, it sucks I hate asynchronous programming
-    except Exception as e:
-        raise e
-    
-    town = gameState.channels.townVoice
-    for member in members:
-        try: #Try to move them from current vc to new vc, fails is user is in no vc
-            await member.move_to(town) #move them to their channel 
-        except Exception as e:
-            print(e)
-            
-async def movePlayersToTown(guild: discord.Guild, members: List[discord.Member]): #Moves players to townsquare without chaing their perms
-    town = gameState.channels.townVoice
-    for member in members:
-        try: #Try to move them from current vc to new vc, fails is user is in no vc
-            await member.move_to(town) #move them to their channel 
-        except Exception as e:
-            print(e)    
-            
-async def movePlayersToStorytellerPrivate(guild: discord.Guild, members: List[discord.Member]):#Moves players to storytellers corner
-    corner = gameState.channels.storytellerVoice
-    for member in members:
-        try: #Try to move them from current vc to new vc, fails is user is in no vc
-            await member.move_to(corner) #move them to their channel 
-        except Exception as e:
-            print(e)  
-
-async def allowPlayersRoam(guild: discord.Guild, members: List[discord.Member]): #Give players the Roam role, lets them visit public rooms
-    try:
-        roamRole = get(guild.roles, name=Role.roam.value)
-        for member in members:
-            print(f"user: {member} roles {member.roles}")
-            if not (roamRole in member.roles):
-                await member.add_roles(roamRole)
-    except Exception as e:
-        raise e
-    
-async def denyPlayersRoam(guild: discord.Guild, members: List[discord.Member]): #Remove player(s)'s Roam role if they have it, denying them from public rooms
-    try:
-        roamRole = get(guild.roles, name=Role.roam.value)
-        for member in members:
-            print(f"user: {member} roles {member.roles}")
-            if roamRole in member.roles:
-                await member.remove_roles(roamRole)
-    except Exception as e:
-        raise e
-    
-async def handlePlayerMovement(guild: discord.guild): #Handles player movement based on the phase of the game
-    if gameState.dayPhase == 0: #Night movement, send to private room
-        await sendPlayersToPrivateRoom(guild,gameState.getPlayers(guild))
-    elif gameState.dayPhase == 1: #Dawn movement, bring to town, announce night actions
-        await sendPlayersToTown(guild,gameState.getPlayers(guild))
-    elif gameState.dayPhase == 2: #Midday movement, allow players to privately talk
-        await movePlayersToTown(guild,gameState.getPlayers(guild))
-        await allowPlayersRoam(guild,gameState.getPlayers(guild))
-    elif gameState.dayPhase == 3: #Dusk movement, deny players private talk, bring to town for nominations
-        await movePlayersToTown(guild,gameState.getPlayers(guild))
-        await denyPlayersRoam(guild,gameState.getPlayers(guild))
-    else: #Error state, should not be called
-        raise Exception(f"dayPhase: {gameState.dayPhase} not in range o to 3")
-    
-async def declareGamePhase(): #Bot states the phase of the game into chat
-    await gameState.channels.getTownText().send(gameState.getGameTimeMsg())
-
-@bot.tree.command(
-    name="start_game",
-    description="Starts a BoTC game: setup players, storyteller and channel first"
-)
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def startGame(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-    await commandLock.acquire()
-    try:
+    @app_commands.command(
+        name="setup_channels",
+        description="creates the channels needed for the game if they do not exist",
+    )
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.guild_only()
+    async def setupChannels(self,interaction: discord.Interaction): #Creates the text and voice channels for the bot#
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
         if gameState.active:
-            await interaction.edit_original_response(content=f"A game is already running, end it before starting a new one")
+            await interaction.edit_original_response(content=f"Cannot setup channels during an active game")
+            commandLock.release()
             return
-        if not gameState.channelReady:
-            await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
-            return 
+        if gameState.getPlayers(interaction.guild) == []:
+            await interaction.edit_original_response(content=f"Cannot setup channels with no added players")
+            commandLock.release()
+            return
+        try:
+            category = get(interaction.guild.categories,name=ChannelNames.category.value)
+            if category: # If category already exists delete it adn its channels
+                print(f"Category already exists, delete all channels inside and it")
+                channels = category.channels
+                for channel in channels:
+                    await channel.delete()
+                await category.delete()
+            
+            #Create category
+            gameState.channels.category = await interaction.guild.create_category(ChannelNames.category.value)
 
-        await setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
-    
-        await movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers(interaction.guild)) #move all players to their private room
-        gameState.active = True    
-
-        await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
-    
-        await declareGamePhase() # Declare the time, the first night
-    except Exception as e:
-        print(e)
-    finally:
-        commandLock.release()
-    
-    
-@bot.tree.command(
-    name="end_game",
-    description="Ends the active game, with an optional reason"
-)
-@app_commands.choices(reason=[ 
-    app_commands.Choice(name="Good wins", value="The good team wins!"),
-    app_commands.Choice(name="Evil wins", value="The evil team wins!"),
-    app_commands.Choice(name="Draw", value="The game is over, it is a draw!"),
-    app_commands.Choice(name="None", value="The game is over!"),
-])
-@app_commands.describe(reason="The reason the game is over (optional)")
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def endGame(interaction: discord.Interaction, reason: app_commands.Choice[str] = None): #Ends an active game, with a given reason
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    if not gameState.active:
-        await interaction.edit_original_response(content=f"There is no active game to end")
-        return    
-
-    gameState.endGame()
-
-    if reason == None:
-        await gameState.channels.getTownText().send(f"The game is over!")
-    else:
-        await gameState.channels.getTownText().send(reason.value)
-
-    await interaction.edit_original_response(content=f"The game has been ended!")
-    commandLock.release()
-
-@bot.tree.command(
-    name="advance_phase",
-    description="Advances the current game to the next phase or a set time if given"
-)
-#Which next phase to jump to, advaces the day counter if needed
-@app_commands.choices(time=[ 
-        app_commands.Choice(name="Night", value=0),
-        app_commands.Choice(name="Dawn", value=1),
-        app_commands.Choice(name="Midday", value=2),
-        app_commands.Choice(name="Dusk", value=3),
-])
-@app_commands.describe(time="The next phase to skip the game to (optional)")
-@app_commands.describe(day="The day number to skip the game to (optional)")
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def nextGamePhase(interaction: discord.Interaction, time: app_commands.Choice[int] = None, day: int = None):
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-
-    if not gameState.active: # Cant advance an inactive game
-        await interaction.edit_original_response(content=f"Requires a game to be running")
-        return
-    
-    if (day != None) and (day < 0): # Cant pass negative value
-        await interaction.edit_original_response(content=f"Cannot set day number to: {day}")
-        return
-    
-    if time == None: #If no argument passed
-        if not (day == None):
-            gameState.gameDay = day
-        gameState.incrementDayPhase()
-    else:
-        if day == None: #if a day was not given
-            gameState.advanceDayPhase(time.value)
-        else:
-            gameState.setTime(day,time.value)
+            #Create the channels needed for the game to run
+            await self.createStoryText(interaction)
+            await self.createStoryVoice(interaction)
+            await self.createTownText(interaction)
+            await self.createTownVoice(interaction)
+            await self.createPublicVoice(interaction,8)
+            await self.createPrivateVoice(interaction,gameState.getPlayers(interaction.guild))
         
-    await handlePlayerMovement(interaction.guild)
-
-    await declareGamePhase()
-
-    await interaction.edit_original_response(content=f"Advanced to day: {gameState.gameDay}, phase: {gameState.dayPhase} and attempted to move players to the correct channel")
-    commandLock.release()    
-
-@bot.tree.command(
-    name="retry_player_movement",
-    description="Attempts to move all players according to the day phase"
-)
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def retryPlayerMovement(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    if not gameState.active:
-        await interaction.edit_original_response(content=f"Requires a game to be running")
-        return
-    
-    await handlePlayerMovement(interaction.guild) 
-
-    await interaction.edit_original_response(content=f"Attempted to move players to the appropriate channel")
-    commandLock.release()
-  
-async def killPlayerWithReason(interaction: discord.Interaction, member: discord.Member, reason: str = None): #Kill and announce a player is dead with a given reason   
-    await killPlayers(interaction.guild,[member]) # Mark their roles as dead
-
-    if reason == None:
-        await gameState.channels.getTownText().send(f"{member} is dead!")
-    else:
-        await gameState.channels.getTownText().send(f"{member} {reason}")
+            self.setupChannelLocks(gameState.channels.publicRooms)
         
-@bot.tree.command(
-    name="storyteller_private",
-    description="Moves a player to the story telllers private voice channel from the current voice channel"
-)
-@app_commands.describe(member="The member to move")
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def movePlayerToStortellerChannel(interaction: discord.Interaction, member: discord.Member): #Moves select player to the storyteller's channel
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    try:
+            gameState.channelReady = True
+            await interaction.edit_original_response(content=f"Succesfully created channels")
+        except Exception as e:
+            print("Exception has occured while setting up channels:",e)
+            gameState.channelReady = False
+            await interaction.edit_original_response(content=f"Something went setting up channels")
+        finally:
+            commandLock.release()
+    
+    """
+    Sets the roles of a list of users
+    guild - guild of the sver
+    members - memers to change roles of
+    roles - The bot specific roles to set to
+    """
+    async def setRoles(self,guild:discord.Guild, members: List[discord.Member], roles: List[discord.Member]):
+        try:
+            excessRoleList = [
+                get(guild.roles, name=Role.alive.value),
+                get(guild.roles, name=Role.dead.value),
+                get(guild.roles, name=Role.day.value),
+                get(guild.roles, name=Role.night.value),
+                get(guild.roles, name=Role.roam.value),
+            ]
+            for member in members:
+                newRoles = member.roles
+                for role in excessRoleList:
+                    if (role in newRoles):
+                        newRoles.remove(role)
+                for role in roles:
+                    if not (role in newRoles):
+                        newRoles.append(role)
+                print(f"user: {member} roles {roles}")
+                await member.edit(roles=newRoles)
+        
+        except Exception as e:
+            raise e
+    
+    async def alivePlayers(self,guild: discord.Guild, members: List[discord.Member]): #give players the alive role, remove dead role if they have it
+        try: #Roles might not exist or calling members may fail
+            aliveRole = get(guild.roles, name=Role.alive.value)
+            deadRole = get(guild.roles, name=Role.dead.value)
+            for member in members:
+                roles = member.roles
+                if deadRole in roles:
+                    roles.remove(deadRole)
+                if not (aliveRole in member.roles):
+                    roles.append(aliveRole)
+                await member.edit(roles=roles)
+        except Exception as e:
+            raise e
+    
+    async def killPlayers(self,guild: discord.Guild, members: List[discord.Member]): #give players the dead role, remove alive role if they have it
+        try: #Roles might not exist or calling members may fail
+            aliveRole = get(guild.roles, name=Role.alive.value)
+            deadRole = get(guild.roles, name=Role.dead.value)
+            for member in members:
+                roles = member.roles
+                if aliveRole in roles:
+                    roles.remove(aliveRole)
+                if not (deadRole in member.roles):
+                    roles.append(deadRole)
+                await member.edit(roles=roles)
+        except Exception as e:
+            raise e
+    
+    async def unlockPlayersPrivateRoom(self,guild: discord.Guild ,members: List[discord.Member]): #Give players permission to enter their private room
+        try: #Roles might not exist or calling members may fail
+            for member in members:
+                privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
+                await privateRoom.set_permissions(member,read_messages=True)
+        except Exception as e:
+            raise e
+    
+    async def lockPlayersPrivateRoom(self,guild: discord.Guild,members: List[discord.Member]): #Remove players permission to enter their private room
+        try: #Roles might not exist or calling members may fail
+            for member in members:
+                privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
+                await privateRoom.set_permissions(member,read_messages=False)
+        except Exception as e:
+            raise e
+
+    async def sendPlayersToPrivateRoom(self,guild: discord.Guild, members: List[discord.Member]): #give players the Night role, remove day and roam roles and send them to their private room
+        try: #Roles might not exist or calling members may fail
+            dayRole = get(guild.roles, name=Role.day.value)
+            nightRole = get(guild.roles, name=Role.night.value)
+            roamRole = get(guild.roles, name=Role.roam.value)
+
+            #Players need to be able to access their room to be sent to it
+            await self.unlockPlayersPrivateRoom(guild,members)        
+        
+            for member in members:
+                roles = member.roles
+                if dayRole in roles:
+                    roles.remove(dayRole)
+                if roamRole in roles:
+                    roles.remove(roamRole)
+                if not (nightRole in roles):
+                    roles.append(nightRole)
+                await member.edit(roles=roles) #You must add roles atmoically or errors occour, it sucks
+        except Exception as e:
+            raise e
+    
+        for member in members:
+            try: #Try to move them from current vc to new vc, fails is user is in no vc
+                privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
+                await member.move_to(privateRoom) #move them to their channel 
+            except Exception as e:
+                print(e)
+    
+    async def movePlayersToPrivateRoom(self,guild: discord.Guild, members: List[discord.Member]): #move players to their private room without changing roles
+        #Players need to be able to access their room to be sent to it
+        await self.unlockPlayersPrivateRoom(guild,members)    
+
+        for member in members:
+            try: #Try to move them from current vc to new vc, fails is user is in no vc
+                privateRoom = gameState.getRoomOfPlayer(member) #player's private channel
+                await member.move_to(privateRoom) #move them to their channel 
+            except Exception as e:
+                print(e)
+
+    async def sendPlayersToTown(self,guild: discord.Guild, members: List[discord.Member]): #Give players the Day Role, remove night and roam roles and force them into town
+        try: #Roles might not exist or calling members may fail
+            dayRole = get(guild.roles, name=Role.day.value)
+            nightRole = get(guild.roles, name=Role.night.value)
+            roamRole = get(guild.roles, name=Role.roam.value)
+
+            #Players should be blocked from their rooms
+            await self.lockPlayersPrivateRoom(guild, members)        
+
+            for member in members:
+                roles = member.roles
+                if nightRole in roles:
+                    roles.remove(nightRole)
+                if roamRole in roles:
+                    roles.remove(roamRole)
+                if not (dayRole in roles):
+                    roles.append(dayRole)
+                await member.edit(roles=roles) #You must add roles atmoically or eronious errors occour, it sucks I hate asynchronous programming
+        except Exception as e:
+            raise e
+    
+        town = gameState.channels.townVoice
+        for member in members:
+            try: #Try to move them from current vc to new vc, fails is user is in no vc
+                await member.move_to(town) #move them to their channel 
+            except Exception as e:
+                print(e)
+            
+    async def movePlayersToTown(self,guild: discord.Guild, members: List[discord.Member]): #Moves players to townsquare without chaing their perms
+        town = gameState.channels.townVoice
+        for member in members:
+            try: #Try to move them from current vc to new vc, fails is user is in no vc
+                await member.move_to(town) #move them to their channel 
+            except Exception as e:
+                print(e)    
+            
+    async def movePlayersToStorytellerPrivate(self,guild: discord.Guild, members: List[discord.Member]):#Moves players to storytellers corner
+        corner = gameState.channels.storytellerVoice
+        for member in members:
+            try: #Try to move them from current vc to new vc, fails is user is in no vc
+                await member.move_to(corner) #move them to their channel 
+            except Exception as e:
+                print(e)  
+
+    async def allowPlayersRoam(self,guild: discord.Guild, members: List[discord.Member]): #Give players the Roam role, lets them visit public rooms
+        try:
+            roamRole = get(guild.roles, name=Role.roam.value)
+            for member in members:
+                print(f"user: {member} roles {member.roles}")
+                if not (roamRole in member.roles):
+                    await member.add_roles(roamRole)
+        except Exception as e:
+            raise e
+    
+    async def denyPlayersRoam(self,guild: discord.Guild, members: List[discord.Member]): #Remove player(s)'s Roam role if they have it, denying them from public rooms
+        try:
+            roamRole = get(guild.roles, name=Role.roam.value)
+            for member in members:
+                print(f"user: {member} roles {member.roles}")
+                if roamRole in member.roles:
+                    await member.remove_roles(roamRole)
+        except Exception as e:
+            raise e
+    
+    async def handlePlayerMovement(self,guild: discord.guild): #Handles player movement based on the phase of the game
+        if gameState.dayPhase == 0: #Night movement, send to private room
+            await self.sendPlayersToPrivateRoom(guild,gameState.getPlayers(guild))
+        elif gameState.dayPhase == 1: #Dawn movement, bring to town, announce night actions
+            await self.sendPlayersToTown(guild,gameState.getPlayers(guild))
+        elif gameState.dayPhase == 2: #Midday movement, allow players to privately talk
+            await self.movePlayersToTown(guild,gameState.getPlayers(guild))
+            await self.allowPlayersRoam(guild,gameState.getPlayers(guild))
+        elif gameState.dayPhase == 3: #Dusk movement, deny players private talk, bring to town for nominations
+            await self.movePlayersToTown(guild,gameState.getPlayers(guild))
+            await self.denyPlayersRoam(guild,gameState.getPlayers(guild))
+        else: #Error state, should not be called
+            raise Exception(f"dayPhase: {gameState.dayPhase} not in range o to 3")
+    
+    async def declareGamePhase(self): #Bot states the phase of the game into chat
+        await gameState.channels.getTownText().send(gameState.getGameTimeMsg())
+
+    @app_commands.command(
+        name="start_game",
+        description="Starts a BoTC game: setup players, storyteller and channel first"
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def startGame(self,interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        await commandLock.acquire()
+        try:
+            if gameState.active:
+                await interaction.edit_original_response(content=f"A game is already running, end it before starting a new one")
+                return
+            if not gameState.channelReady:
+                await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
+                return 
+
+            await self.setRoles(interaction.guild,gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
+    
+            await self.movePlayersToPrivateRoom(interaction.guild,gameState.getPlayers(interaction.guild)) #move all players to their private room
+            gameState.active = True    
+
+            await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
+    
+            await self.declareGamePhase() # Declare the time, the first night
+        except Exception as e:
+            print(e)
+        finally:
+            commandLock.release()
+    
+    
+    @app_commands.command(
+        name="end_game",
+        description="Ends the active game, with an optional reason"
+    )
+    @app_commands.choices(reason=[ 
+        app_commands.Choice(name="Good wins", value="The good team wins!"),
+        app_commands.Choice(name="Evil wins", value="The evil team wins!"),
+        app_commands.Choice(name="Draw", value="The game is over, it is a draw!"),
+        app_commands.Choice(name="None", value="The game is over!"),
+    ])
+    @app_commands.describe(reason="The reason the game is over (optional)")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def endGame(self,interaction: discord.Interaction, reason: app_commands.Choice[str] = None): #Ends an active game, with a given reason
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
         if not gameState.active:
+            await interaction.edit_original_response(content=f"There is no active game to end")
+            return    
+
+        gameState.endGame()
+
+        if reason == None:
+            await gameState.channels.getTownText().send(f"The game is over!")
+        else:
+            await gameState.channels.getTownText().send(reason.value)
+
+        await interaction.edit_original_response(content=f"The game has been ended!")
+        commandLock.release()
+
+    @app_commands.command(
+        name="advance_phase",
+        description="Advances the current game to the next phase or a set time if given"
+    )
+    #Which next phase to jump to, advaces the day counter if needed
+    @app_commands.choices(time=[ 
+            app_commands.Choice(name="Night", value=0),
+            app_commands.Choice(name="Dawn", value=1),
+            app_commands.Choice(name="Midday", value=2),
+            app_commands.Choice(name="Dusk", value=3),
+    ])
+    @app_commands.describe(time="The next phase to skip the game to (optional)")
+    @app_commands.describe(day="The day number to skip the game to (optional)")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def nextGamePhase(self,interaction: discord.Interaction, time: app_commands.Choice[int] = None, day: int = None):
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
+
+        if not gameState.active: # Cant advance an inactive game
             await interaction.edit_original_response(content=f"Requires a game to be running")
             return
-        
-        if member.voice != None:
-            await movePlayersToStorytellerPrivate(interaction.guild,[member])
-            await interaction.edit_original_response(content=f"Moved {member.name} to {gameState.channels.storytellerVoice.name}")
+    
+        if (day != None) and (day < 0): # Cant pass negative value
+            await interaction.edit_original_response(content=f"Cannot set day number to: {day}")
+            return
+    
+        if time == None: #If no argument passed
+            if not (day == None):
+                gameState.gameDay = day
+            gameState.incrementDayPhase()
         else:
-            await interaction.edit_original_response(content=f"Can't move {member.name}, they need to be connected to a voice channel first, its a discord limitation") 
-    except Exception as e:
-        print(e)
-    finally:
+            if day == None: #if a day was not given
+                gameState.advanceDayPhase(time.value)
+            else:
+                gameState.setTime(day,time.value)
+        
+        await self.handlePlayerMovement(interaction.guild)
+
+        await self.declareGamePhase()
+
+        await interaction.edit_original_response(content=f"Advanced to day: {gameState.gameDay}, phase: {gameState.dayPhase} and attempted to move players to the correct channel")
         commandLock.release()    
 
-@bot.tree.command(
-    name="kill_player",
-    description="Announces and marks that a player is dead, with an optional reason"
-)
-@app_commands.choices(reason=[ 
-    app_commands.Choice(name="None", value="is dead!"),
-    app_commands.Choice(name="Died last night", value="died last night!"),
-    app_commands.Choice(name="Execution", value="was executed!"),
-    app_commands.Choice(name="Unknown", value="somehow died for no known reason!"),
-])
-@app_commands.describe(member="The member to kill")
-@app_commands.describe(reason="The given announced reason (optional)")
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def killPlayer(interaction: discord.Interaction, member: discord.Member, reason: app_commands.Choice[str] = None): #Marks that a player is dead and announces the death to all players
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    #note, in the rules of BonCT, it is possible for an already dead player to be killed again, see: vigormortis role    
-    
-    if not gameState.active:
-        await interaction.edit_original_response(content=f"Requires a game to be running")
-        return
-    
-    if not (member in gameState.getPlayers(interaction.guild)):
-        await interaction.edit_original_response(content=f"{member} is not listed as a player")
-        return
-    
-    if reason == None:
-        string = None
-    else:
-        string = reason.value
-    await killPlayerWithReason(interaction,member,string)
-    await interaction.edit_original_response(content=f"Killed player: {member}")
-    commandLock.release()
-    
-@bot.tree.command(
-    name="ressurect_player",
-    description="Announce and marks that a player is alive, used for certain player abilities"
-)
-@app_commands.describe(member="The member to ressurect")
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def alivePlayer(interaction: discord.Interaction,member: discord.Member): #Marks a player as alive and announced it to all players
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-
-    if not gameState.active:
-        await interaction.edit_original_response(content=f"Requires a game to be running")
-        return
-    
-    if not (member in gameState.getPlayers(interaction.guild)):
-        await interaction.edit_original_response(content=f"{member} is not listed as a player")
-        return
-
-    await alivePlayers(interaction.guild,[member])
-
-    await gameState.channels.getTownText().send(f"{member} is alive!")
-    commandLock.release()
-    
-@bot.tree.command(
-    name="open_door",
-    description="Lets other users join the public room you are in, until it closes automatically again"
-)
-@app_commands.guild_only()
-@app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
-async def openPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to open a locked public room they are in
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    try:
-        if not gameState.active:
-            await interaction.edit_original_response(content=f"Requires a game to be running")
-            return
-        if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
-            await interaction.edit_original_response(content=f"You are not a member of the currently running game")
-            return 
-        
-        channel = interaction.user.voice.channel        
-
-        if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
-            await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
-            return 
-        
-        if not gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is not locked
-            await interaction.edit_original_response(content=f"This room is already open")
-            return 
-        
-        #Open room now
-        await voiceStateLock.acquire()
-        gameState.channelLocks.unlockRoom(channel)
-        roamRole = get(channel.guild.roles, name=Role.roam.value)
-        await channel.set_permissions(roamRole,read_messages=True,connect=True)
-        voiceStateLock.release()
-        
-        await interaction.edit_original_response(content=f"Opened channel: {channel.name}")
-        commandLock.release() #Release command lock before waiting on the scheduled task
-        
-        #Create a task to close it again in the future, lock in openCooldown seconds (Usually longer than the default)
-        task = asyncio.create_task(lockChannelInSeconds(channel,voiceStateLock,gameState.openCooldown))
+    @app_commands.command(
+        name="retry_player_movement",
+        description="Attempts to move all players according to the day phase"
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def retryPlayerMovement(self,interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True,ephemeral=True)
         await commandLock.acquire()
-    except Exception as e:
-        print(e)
-    finally:
-        commandLock.release()
-        
-@bot.tree.command(
-    name="lock_door",
-    description="Prevents players from joining the public room you are in"
-)
-@app_commands.guild_only()
-@app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
-async def lockPublicRoomCommand(interaction: discord.Interaction): #Allows a member in the game to lock an open public room they are in
-    await interaction.response.defer(thinking=True,ephemeral=True)
-    await commandLock.acquire()
-    try:
         if not gameState.active:
             await interaction.edit_original_response(content=f"Requires a game to be running")
             return
-        if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
-            await interaction.edit_original_response(content=f"You are not a member of the currently running game")
-            return 
-        
-        channel = interaction.user.voice.channel        
+    
+        await self.handlePlayerMovement(interaction.guild) 
 
-        if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
-            await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
-            return 
-        
-        if gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is locked
-            await interaction.edit_original_response(content=f"This room is already locked")
-            return 
-        
-        #lock room now
-        await voiceStateLock.acquire()
-        gameState.channelLocks.lockRoom(channel)
-        roamRole = get(channel.guild.roles, name=Role.roam.value)
-        await channel.set_permissions(roamRole,read_messages=True,connect=False)
-        voiceStateLock.release()
-        
-        await interaction.edit_original_response(content=f"Locked channel: {channel.name}")
-    except Exception as e:
-        print(e)
-    finally:
+        await interaction.edit_original_response(content=f"Attempted to move players to the appropriate channel")
         commandLock.release()
-        
-@bot.tree.command(
-    name="character",
-    description="Prints information and rules on a given character role"
-)
-@app_commands.choices(character=characterData.choices)
-@app_commands.guild_only()
-async def declareCharacter(interaction: discord.Interaction, character: app_commands.Choice[str]): #Prints in chat the summary of a character role
-    await interaction.response.defer(thinking=True)
-    try:
-        embed = characterData.getEmbedOfCharacter(character.value)
-        if embed != None:
-            await interaction.edit_original_response(embed=embed)
-        else:
-            await interaction.edit_original_response(content="Could not find character")
-    except Exception as e:
-        print(e)
-        
-@bot.tree.command(
-    name="you_are_the",
-    description="Used by the storyteller to tell players their character"
-)
-@app_commands.choices(character=characterData.choices)
-@app_commands.guild_only()
-@app_commands.checks.has_role('ctb-StoryTeller')
-async def youAreTheCharacter(interaction: discord.Interaction, character: app_commands.Choice[str]): #Just like /character except it declares what character a plaer is
-    await interaction.response.defer(thinking=True)
-    try:
-        embed = characterData.getEmbedOfCharacter(character.value)
-        if embed != None:
-            embed.title = "You are the:"
-            await interaction.edit_original_response(embed=embed)
-        else:
-            await interaction.edit_original_response(content="Could not find character")
-    except Exception as e:
-        print(e)
+  
+    async def killPlayerWithReason(self,interaction: discord.Interaction, member: discord.Member, reason: str = None): #Kill and announce a player is dead with a given reason   
+        await self.killPlayers(interaction.guild,[member]) # Mark their roles as dead
 
+        if reason == None:
+            await gameState.channels.getTownText().send(f"{member} is dead!")
+        else:
+            await gameState.channels.getTownText().send(f"{member} {reason}")
+        
+    @app_commands.command(
+        name="storyteller_private",
+        description="Moves a player to the story telllers private voice channel from the current voice channel"
+    )
+    @app_commands.describe(member="The member to move")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def movePlayerToStortellerChannel(self,interaction: discord.Interaction, member: discord.Member): #Moves select player to the storyteller's channel
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
+        try:
+            if not gameState.active:
+                await interaction.edit_original_response(content=f"Requires a game to be running")
+                return
+        
+            if member.voice != None:
+                await self.movePlayersToStorytellerPrivate(interaction.guild,[member])
+                await interaction.edit_original_response(content=f"Moved {member.name} to {gameState.channels.storytellerVoice.name}")
+            else:
+                await interaction.edit_original_response(content=f"Can't move {member.name}, they need to be connected to a voice channel first, its a discord limitation") 
+        except Exception as e:
+            print(e)
+        finally:
+            commandLock.release()    
+
+    @app_commands.command(
+        name="kill_player",
+        description="Announces and marks that a player is dead, with an optional reason"
+    )
+    @app_commands.choices(reason=[ 
+        app_commands.Choice(name="None", value="is dead!"),
+        app_commands.Choice(name="Died last night", value="died last night!"),
+        app_commands.Choice(name="Execution", value="was executed!"),
+        app_commands.Choice(name="Unknown", value="somehow died for no known reason!"),
+    ])
+    @app_commands.describe(member="The member to kill")
+    @app_commands.describe(reason="The given announced reason (optional)")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def killPlayer(self,interaction: discord.Interaction, member: discord.Member, reason: app_commands.Choice[str] = None): #Marks that a player is dead and announces the death to all players
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
+        #note, in the rules of BonCT, it is possible for an already dead player to be killed again, see: vigormortis role    
     
-async def lockChannelInSeconds(channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
-    print(f"Locking channel: {channel.name} in {secs} seconds")
-    await asyncio.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
-    #This command doesnt wait the exact amount of seconds, since there may be a delay to accquire rights to change channel permissions
-    await locker.acquire()
-    try:
-        #Channel might have changed in the time we waited, get updated version
-        recentChannel = bot.get_channel(channel.id)
-        if (len(gameState.filterPlayers(recentChannel.members)) != 0): #The room is not empty, lock it
-            roamRole = get(recentChannel.guild.roles, name=Role.roam.value)
-            await recentChannel.set_permissions(roamRole,read_messages=True,connect=False) #Prevent roaming players from connecting
-            gameState.channelLocks.lockRoom(recentChannel)
-            print(f"Locked channel: {recentChannel.name}")
+        if not gameState.active:
+            await interaction.edit_original_response(content=f"Requires a game to be running")
+            return
+    
+        if not (member in gameState.getPlayers(interaction.guild)):
+            await interaction.edit_original_response(content=f"{member} is not listed as a player")
+            return
+    
+        if reason == None:
+            string = None
         else:
-            print(f"Cancelled locking of channel: {channel.name}")
-    except:
-        print(f"locking is being cancelled")
-        raise
-    finally:
-        locker.release()
+            string = reason.value
+        await self.killPlayerWithReason(interaction,member,string)
+        await interaction.edit_original_response(content=f"Killed player: {member}")
+        commandLock.release()
+    
+    @app_commands.command(
+        name="ressurect_player",
+        description="Announce and marks that a player is alive, used for certain player abilities"
+    )
+    @app_commands.describe(member="The member to ressurect")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def alivePlayer(self,interaction: discord.Interaction,member: discord.Member): #Marks a player as alive and announced it to all players
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
 
-async def handleMemberJoinPublic(member: discord.Member, channel: discord.VoiceChannel): #Handle member joining a public room
-    await voiceStateLock.acquire()
-    if not gameState.channelLocks.isRoomLocked(channel): #if the room is open
-        gameState.channelLocks.addMembersToRoom(channel,[member])
-        if (len(gameState.filterPlayers(channel.members)) == 1): #If there is only one member in the chat
-            voiceStateLock.release()
-            
-            #Create an asynciio task to lock down this channel in a set amount of time
-            task = asyncio.create_task(lockChannelInSeconds(channel,voiceStateLock,gameState.lockCooldown))
+        if not gameState.active:
+            await interaction.edit_original_response(content=f"Requires a game to be running")
+            return
+    
+        if not (member in gameState.getPlayers(interaction.guild)):
+            await interaction.edit_original_response(content=f"{member} is not listed as a player")
+            return
+
+        await self.alivePlayers(interaction.guild,[member])
+
+        await gameState.channels.getTownText().send(f"{member} is alive!")
+        commandLock.release()
+    
+    @app_commands.command(
+        name="open_door",
+        description="Lets other users join the public room you are in, until it closes automatically again"
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
+    async def openPublicRoomCommand(self,interaction: discord.Interaction): #Allows a member in the game to open a locked public room they are in
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
+        try:
+            if not gameState.active:
+                await interaction.edit_original_response(content=f"Requires a game to be running")
+                return
+            if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
+                await interaction.edit_original_response(content=f"You are not a member of the currently running game")
+                return 
+        
+            channel = interaction.user.voice.channel        
+
+            if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
+                await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
+                return 
+        
+            if not gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is not locked
+                await interaction.edit_original_response(content=f"This room is already open")
+                return 
+        
+            #Open room now
             await voiceStateLock.acquire()
-    voiceStateLock.release()
-    
-async def handleMemberLeavePublic(member: discord.Member, channel: discord.VoiceChannel): # Handle member leaving a public room
-    await voiceStateLock.acquire()
-    if gameState.channelLocks.isRoomLocked(channel): # if room is locked
-        print(f"{channel.members}")
-        if (len(gameState.filterPlayers(channel.members)) == 0): #The room is now empty
             gameState.channelLocks.unlockRoom(channel)
             roamRole = get(channel.guild.roles, name=Role.roam.value)
             await channel.set_permissions(roamRole,read_messages=True,connect=True)
-    gameState.channelLocks.removeMembersToRoom(channel,[member])
-    voiceStateLock.release()
+            voiceStateLock.release()
+        
+            await interaction.edit_original_response(content=f"Opened channel: {channel.name}")
+            commandLock.release() #Release command lock before waiting on the scheduled task
+        
+            #Create a task to close it again in the future, lock in openCooldown seconds (Usually longer than the default)
+            task = asyncio.create_task(self.lockChannelInSeconds(channel,voiceStateLock,gameState.openCooldown))
+            await commandLock.acquire()
+        except Exception as e:
+            print(e)
+        finally:
+            commandLock.release()
+        
+    @app_commands.command(
+        name="lock_door",
+        description="Prevents players from joining the public room you are in"
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_any_role('ctb-Player','ctb-StoryTeller')
+    async def lockPublicRoomCommand(self,interaction: discord.Interaction): #Allows a member in the game to lock an open public room they are in
+        await interaction.response.defer(thinking=True,ephemeral=True)
+        await commandLock.acquire()
+        try:
+            if not gameState.active:
+                await interaction.edit_original_response(content=f"Requires a game to be running")
+                return
+            if not (interaction.user in gameState.getAllUsers(interaction.guild)): #If user is not in the game
+                await interaction.edit_original_response(content=f"You are not a member of the currently running game")
+                return 
+        
+            channel = interaction.user.voice.channel        
 
-"""
-Called whenver a member changes their voice state:
-    - When a member joins a voice channel
-    - When a member leaves a voice channel
-    - When a member is muted or deafened on their own accord
-    - When a member is muted or deafened by an admin (such as this bot)
-"""
-@bot.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    print(f"Member: {member.name} moved from voicestate {before.channel} to {after.channel}")
+            if not (channel in gameState.channels.publicRooms): #If the channel the user is in is not a public room
+                await interaction.edit_original_response(content=f"You must be in a public room voice channel to use this command")
+                return 
+        
+            if gameState.channelLocks.isRoomLocked(channel): #If the public room the user is in is locked
+                await interaction.edit_original_response(content=f"This room is already locked")
+                return 
+        
+            #lock room now
+            await voiceStateLock.acquire()
+            gameState.channelLocks.lockRoom(channel)
+            roamRole = get(channel.guild.roles, name=Role.roam.value)
+            await channel.set_permissions(roamRole,read_messages=True,connect=False)
+            voiceStateLock.release()
+        
+            await interaction.edit_original_response(content=f"Locked channel: {channel.name}")
+        except Exception as e:
+            print(e)
+        finally:
+            commandLock.release()
+        
+    @app_commands.command(
+        name="character",
+        description="Prints information and rules on a given character role"
+    )
+    @app_commands.choices(character=characterData.choices)
+    @app_commands.guild_only()
+    async def declareCharacter(self,interaction: discord.Interaction, character: app_commands.Choice[str]): #Prints in chat the summary of a character role
+        await interaction.response.defer(thinking=True)
+        try:
+            embed = self.characterData.getEmbedOfCharacter(character.value)
+            if embed != None:
+                await interaction.edit_original_response(embed=embed)
+            else:
+                await interaction.edit_original_response(content="Could not find character")
+        except Exception as e:
+            print(e)
+        
+    @app_commands.command(
+        name="you_are_the",
+        description="Used by the storyteller to tell players their character"
+    )
+    @app_commands.choices(character=characterData.choices)
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def youAreTheCharacter(self,interaction: discord.Interaction, character: app_commands.Choice[str]): #Just like /character except it declares what character a plaer is
+        await interaction.response.defer(thinking=True)
+        try:
+            embed = self.characterData.getEmbedOfCharacter(character.value)
+            if embed != None:
+                embed.title = "You are the:"
+                await interaction.edit_original_response(embed=embed)
+            else:
+                await interaction.edit_original_response(content="Could not find character")
+        except Exception as e:
+            print(e)
 
-    if member in gameState.players: # Only control players
-        if before.channel == after.channel: #If users did not change channels or did not move to/from a channel
-            print(f"Player: {member.name} did not move to or from a channel")
-            return #We only care about moving to or from channels. not changes inside of channels
-
-        #handle previous channel
-        if before.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
-            print(f"Player: {member.name} left public room: {before.channel}")
-            await handleMemberLeavePublic(member,before.channel)
-            print("Done before")
     
-        #handle new channel
-        if after.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
-            print(f"Player: {member.name} entered public room: {after.channel}")
-            await handleMemberJoinPublic(member,after.channel)
-            print("Done after")
-    
-#Handle MissingPermissions exceptions raise from commands that require a permission/role
-#TODO this just FEELS wrong to write out all the decorators like this. but I cant find a better soloution
-@setupRoles.error
-@setStoryTeller.error
-@addPlayer.error
-@removePlayer.error
-@syncRoles.error
-@setupChannels.error
-@startGame.error
-@endGame.error
-@nextGamePhase.error
-@retryPlayerMovement.error
-@killPlayer.error
-@alivePlayer.error
-@openPublicRoomCommand.error
-@lockPublicRoomCommand.error
-@youAreTheCharacter.error
-async def missingPermisionError(interaction: discord.Interaction,error):
-    if isinstance(error, app_commands.checks.MissingPermissions):
-        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
-        
-    elif isinstance(error, app_commands.MissingRole):
-        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
-        
-    elif isinstance(error, commands.MissingRole):
-        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
-        
-    elif isinstance(error, commands.MissingPermissions):
-        await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+    async def lockChannelInSeconds(self,channel: discord.VoiceChannel,locker: asyncio.Lock, secs: int = 5, ): #Prevents players from joining a channel in time seconds from now
+        print(f"Locking channel: {channel.name} in {secs} seconds")
+        await asyncio.sleep(secs) #Wait seconds, this is okay because nothing waits on this task
+        #This command doesnt wait the exact amount of seconds, since there may be a delay to accquire rights to change channel permissions
+        await locker.acquire()
+        try:
+            #Channel might have changed in the time we waited, get updated version
+            recentChannel = bot.get_channel(channel.id)
+            if (len(gameState.filterPlayers(recentChannel.members)) != 0): #The room is not empty, lock it
+                roamRole = get(recentChannel.guild.roles, name=Role.roam.value)
+                await recentChannel.set_permissions(roamRole,read_messages=True,connect=False) #Prevent roaming players from connecting
+                gameState.channelLocks.lockRoom(recentChannel)
+                print(f"Locked channel: {recentChannel.name}")
+            else:
+                print(f"Cancelled locking of channel: {channel.name}")
+        except:
+            print(f"locking is being cancelled")
+            raise
+        finally:
+            locker.release()
 
+    async def handleMemberJoinPublic(self,member: discord.Member, channel: discord.VoiceChannel): #Handle member joining a public room
+        await voiceStateLock.acquire()
+        if not gameState.channelLocks.isRoomLocked(channel): #if the room is open
+            gameState.channelLocks.addMembersToRoom(channel,[member])
+            if (len(gameState.filterPlayers(channel.members)) == 1): #If there is only one member in the chat
+                voiceStateLock.release()
+            
+                #Create an asynciio task to lock down this channel in a set amount of time
+                task = asyncio.create_task(self.lockChannelInSeconds(channel,voiceStateLock,gameState.lockCooldown))
+                await voiceStateLock.acquire()
+        voiceStateLock.release()
+    
+    async def handleMemberLeavePublic(self,member: discord.Member, channel: discord.VoiceChannel): # Handle member leaving a public room
+        await voiceStateLock.acquire()
+        if gameState.channelLocks.isRoomLocked(channel): # if room is locked
+            print(f"{channel.members}")
+            if (len(gameState.filterPlayers(channel.members)) == 0): #The room is now empty
+                gameState.channelLocks.unlockRoom(channel)
+                roamRole = get(channel.guild.roles, name=Role.roam.value)
+                await channel.set_permissions(roamRole,read_messages=True,connect=True)
+        gameState.channelLocks.removeMembersToRoom(channel,[member])
+        voiceStateLock.release()
+
+    """
+    Called whenver a member changes their voice state:
+        - When a member joins a voice channel
+        - When a member leaves a voice channel
+        - When a member is muted or deafened on their own accord
+        - When a member is muted or deafened by an admin (such as this bot)
+    """
+    @commands.Cog.listener()
+    async def on_voice_state_update(self,member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        print(f"Member: {member.name} moved from voicestate {before.channel} to {after.channel}")
+
+        if member in gameState.players: # Only control players
+            if before.channel == after.channel: #If users did not change channels or did not move to/from a channel
+                print(f"Player: {member.name} did not move to or from a channel")
+                return #We only care about moving to or from channels. not changes inside of channels
+
+            #handle previous channel
+            if before.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
+                print(f"Player: {member.name} left public room: {before.channel}")
+                await self.handleMemberLeavePublic(member,before.channel)
+                print("Done before")
+    
+            #handle new channel
+            if after.channel in gameState.channels.publicRooms: #we only care about controlling public rooms in the bot
+                print(f"Player: {member.name} entered public room: {after.channel}")
+                await self.handleMemberJoinPublic(member,after.channel)
+                print("Done after")
+    
+    #Handle MissingPermissions exceptions raise from commands that require a permission/role
+    #TODO this just FEELS wrong to write out all the decorators like this. but I cant find a better soloution
+    @setupRoles.error
+    @setStoryTeller.error
+    @addPlayer.error
+    @removePlayer.error
+    @syncRoles.error
+    @setupChannels.error
+    @startGame.error
+    @endGame.error
+    @nextGamePhase.error
+    @retryPlayerMovement.error
+    @killPlayer.error
+    @alivePlayer.error
+    @openPublicRoomCommand.error
+    @lockPublicRoomCommand.error
+    @youAreTheCharacter.error
+    async def missingPermisionError(interaction: discord.Interaction,error):
+        if isinstance(error, app_commands.checks.MissingPermissions):
+            await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+        elif isinstance(error, app_commands.MissingRole):
+            await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+        elif isinstance(error, commands.MissingRole):
+            await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        
+        elif isinstance(error, commands.MissingPermissions):
+            await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+
+#Give commands to the bot
+asyncio.run(bot.add_cog(GameCommands(bot)))
 #Run the bot
 bot.run(TOKEN,log_handler=handler,log_level=logging.DEBUG)
