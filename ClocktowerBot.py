@@ -42,10 +42,45 @@ class ChannelNames(Enum): #Names for set created discord channels and categories
         "Park"
     ]
 
+class VotingType(Enum): #Voting styles that may be used when a player nominates another player
+    circleTally = 0 #Defualt voting method used in the official rules, player votes counted clockwise from nominee
+    countdownTally = 1 #Players vote while being able to see other players, after countdown players votes are tallied,
+    #Used in place to circle tally if latency is bad or for specific characters ability (see Cult leader)
+    blindCountdownTally = 2 #Players vote without being able to see other players, after countdown player votes are tallied,
+    #Used specifically for the Organ Grinders ability
+
+class Player: #Class that holds the data on a player
+    def __init__(self,member: discord.member):
+        self.member: discord.Member = member
+        self.isAlive = True #If the game registers them as alive
+        self.hasGhostVote = True #If the game registers the player as having their ghost vote
+
+    def setIsAlive(self,bool):
+        self.isAlive = bool
+
+    def setHasGhostVote(self,bool):
+        self.hasGhostVote = bool
+
+    def consumeGhostVote(self):
+        if not (self.isAlive):
+            self.hasGhostVote = False
+
+    def canNominate(self) -> bool:
+        return self.isAlive
+    
+    def canVote(self) -> bool:
+        if self.isAlive:
+            return True
+        elif self.hasGhostVote:
+            return True
+        else:
+            return False
+
+
 class GameState: #Class the holds the users set for the game
     def __init__(self):
         self.storyteller = None #Meber who is the storyteller
-        self.players = [] #List of players in the game
+        self.players: List[Player] = [] #List of players in the game
         self.active = False #Whever the game is running or not
         self.channelReady = False #Whever the correct discord channels are in place
         self.channels = GameChannels() #Store game channels here
@@ -62,7 +97,6 @@ class GameState: #Class the holds the users set for the game
         3 - Dusk : Players are brought back to the town centre, nominate and vote on who (if anyone) to execute, afterwards day ends and the next night begins
         """
         self.dayPhase = 0
-        
 
     def __str__(self) -> str:
         playerNames = []
@@ -84,31 +118,40 @@ class GameState: #Class the holds the users set for the game
 
     def setStoryTeller(self,member: discord.Member):
         self.storyteller = member
+
+    def isMemberPlayer(self,member:discord.Member) -> bool:
+        for player in self.players:
+            if player.member == member:
+                return True
+        return False
         
     def addPlayer(self,player: discord.Member):
         if not (player in self.players):
-            self.players.append(player)
-           
+            self.players.append(Player(player))
+
     def removePlayer(self,player: discord.Member):
         if player in self.players:
-            self.players.remove(player)
+            self.players.remove(Player(player))
             
-    def getPlayers(self,guild: discord.Guild): #Gets the most recent instance of the players in the game as a List{dsicord.Member}
+    def getPlayersAsMembers(self,guild: discord.Guild) -> List[discord.Member]: #Gets the most recent instance of the players in the game as a List{dsicord.Member}
         value = []
         playerIds = []
-        for member in self.players:
-            playerIds.append(member.id)
+        for player in self.players:
+            playerIds.append(player.member.id)
         for member in guild.members:
             if member.id in playerIds:
                 value.append(member)
         return value
     
+    def getPlayers(self) -> List[Player]:
+        return self.players
+    
     def addPrivateRoom(self,player: discord.Member,room: discord.channel):
-        if player in self.players:
+        if self.isMemberPlayer(player):
             self.playerChannelDict[player] = room
             
     def getRoomOfPlayer(self,player:discord.Member) -> discord.VoiceChannel:
-        if player in self.players:
+        if self.isMemberPlayer(player):
             return self.playerChannelDict[player]
         
     def incrementDayPhase(self):
@@ -131,7 +174,7 @@ class GameState: #Class the holds the users set for the game
         self.gameDay += 1
         
     def getAllUsers(self,guild: discord.Guild): #Returns all players and the storyteller as a List[discord.Member]
-        value = self.getPlayers(guild)
+        value = self.getPlayersAsMembers(guild)
         for member in guild.members:
             if member.id == self.storyteller.id:
                 value.append(member)
@@ -155,9 +198,10 @@ class GameState: #Class the holds the users set for the game
     def filterPlayers(self,members: List[discord.Member]) -> List[discord.Member]: #Given a list of members, returns which are players
         data = []
         for member in members:
-            if (member in self.players) and (not (member in data)):
+            if self.isMemberPlayer(member) and (not (member in data)):
                 data.append(member)
         return data
+
         
 class GameChannels: #Holds the discord channels for use in the game
     def __init__(self):
@@ -325,7 +369,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             print(member)
             try: #Roles might not exist
                 storyRole = get(interaction.guild.roles, name=Role.storyTeller.value) #Get storyteller role from server
-                if (member in self.gameState.players): #If new storyteller is a player
+                if (member in self.gameState.getPlayersAsMembers(interaction.guild)): #If new storyteller is a player
                     playerRole = get(interaction.guild.roles, name=Role.player.value) #Get player role from server
                     if (playerRole in member.roles):
                         await member.remove_roles(playerRole) #Remove the role
@@ -425,7 +469,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
                 embed.add_field(name="**-Players-**",value="",inline=False)       
                 if (len(self.gameState.players) > 0): #We have some players set
                     for i in range(0, len(self.gameState.players)):
-                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].id}>",inline=False)
+                        embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}>",inline=False)
                 else: #No Players
                     embed.add_field(name="No players have been added",value="",inline=False)
                 
@@ -442,12 +486,12 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
                 deadRole = get(interaction.guild.roles, name=Role.dead.value)
                 if (len(self.gameState.players) > 0): #We have some players set
                     for i in range(0, len(self.gameState.players)):
-                        if (aliveRole in self.gameState.players[i].roles):
-                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].id}> :bust_in_silhouette:",inline=False)
-                        elif (deadRole in self.gameState.players[i].roles):
-                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].id}> :skull:",inline=False)
+                        if (aliveRole in self.gameState.players[i].member.roles):
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :bust_in_silhouette:",inline=False)
+                        elif (deadRole in self.gameState.players[i].member.roles):
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :skull:",inline=False)
                         else:
-                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].id}>",inline=False)
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}>",inline=False)
                         
                 else: #No Players
                     embed.add_field(name="No players have been added",value="",inline=False)
@@ -602,7 +646,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             await interaction.edit_original_response(content=f"Cannot setup channels during an active game")
             self.commandLock.release()
             return
-        if self.gameState.getPlayers(interaction.guild) == []:
+        if self.gameState.getPlayersAsMembers(interaction.guild) == []:
             await interaction.edit_original_response(content=f"Cannot setup channels with no added players")
             self.commandLock.release()
             return
@@ -624,7 +668,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             await self.createTownText(interaction)
             await self.createTownVoice(interaction)
             await self.createPublicVoice(interaction,8)
-            await self.createPrivateVoice(interaction,self.gameState.getPlayers(interaction.guild))
+            await self.createPrivateVoice(interaction,self.gameState.getPlayersAsMembers(interaction.guild))
         
             self.setupChannelLocks(self.gameState.channels.publicRooms)
         
@@ -815,15 +859,15 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
     
     async def handlePlayerMovement(self,guild: discord.guild): #Handles player movement based on the phase of the game
         if self.gameState.dayPhase == 0: #Night movement, send to private room
-            await self.sendPlayersToPrivateRoom(guild,self.gameState.getPlayers(guild))
+            await self.sendPlayersToPrivateRoom(guild,self.gameState.getPlayersAsMembers(guild))
         elif self.gameState.dayPhase == 1: #Dawn movement, bring to town, announce night actions
-            await self.sendPlayersToTown(guild,self.gameState.getPlayers(guild))
+            await self.sendPlayersToTown(guild,self.gameState.getPlayersAsMembers(guild))
         elif self.gameState.dayPhase == 2: #Midday movement, allow players to privately talk
-            await self.movePlayersToTown(guild,self.gameState.getPlayers(guild))
-            await self.allowPlayersRoam(guild,self.gameState.getPlayers(guild))
+            await self.movePlayersToTown(guild,self.gameState.getPlayersAsMembers(guild))
+            await self.allowPlayersRoam(guild,self.gameState.getPlayersAsMembers(guild))
         elif self.gameState.dayPhase == 3: #Dusk movement, deny players private talk, bring to town for nominations
-            await self.movePlayersToTown(guild,self.gameState.getPlayers(guild))
-            await self.denyPlayersRoam(guild,self.gameState.getPlayers(guild))
+            await self.movePlayersToTown(guild,self.gameState.getPlayersAsMembers(guild))
+            await self.denyPlayersRoam(guild,self.gameState.getPlayersAsMembers(guild))
         else: #Error state, should not be called
             raise Exception(f"dayPhase: {self.gameState.dayPhase} not in range o to 3")
     
@@ -847,9 +891,9 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
                 await interaction.edit_original_response(content=f"Channels have not been setup yet, run /setup_chanels to create and set them to the bot")
                 return 
 
-            await self.setRoles(interaction.guild,self.gameState.getPlayers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
+            await self.setRoles(interaction.guild,self.gameState.getPlayersAsMembers(interaction.guild),[get(interaction.guild.roles, name=Role.alive.value),get(interaction.guild.roles, name=Role.player.value),get(interaction.guild.roles, name=Role.night.value)]) #Remove any excess flag roles that users might have for some reason
     
-            await self.movePlayersToPrivateRoom(interaction.guild,self.gameState.getPlayers(interaction.guild)) #move all players to their private room
+            await self.movePlayersToPrivateRoom(interaction.guild,self.gameState.getPlayersAsMembers(interaction.guild)) #move all players to their private room
             self.gameState.active = True    
 
             await interaction.edit_original_response(content=f"The game is set, all players have been sent to their rooms for the first night")
@@ -1009,7 +1053,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             await interaction.edit_original_response(content=f"Requires a game to be running")
             return
     
-        if not (member in self.gameState.getPlayers(interaction.guild)):
+        if not (member in self.gameState.getPlayersAsMembers(interaction.guild)):
             await interaction.edit_original_response(content=f"{member} is not listed as a player")
             return
     
@@ -1036,7 +1080,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             await interaction.edit_original_response(content=f"Requires a game to be running")
             return
     
-        if not (member in self.gameState.getPlayers(interaction.guild)):
+        if not (member in self.gameState.getPlayersAsMembers(interaction.guild)):
             await interaction.edit_original_response(content=f"{member} is not listed as a player")
             return
 
@@ -1222,7 +1266,7 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
     async def on_voice_state_update(self,member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         print(f"Member: {member.name} moved from voicestate {before.channel} to {after.channel}")
 
-        if member in self.gameState.players: # Only control players
+        if GameState.isMemberPlayer(member): # Only control players
             if before.channel == after.channel: #If users did not change channels or did not move to/from a channel
                 print(f"Player: {member.name} did not move to or from a channel")
                 return #We only care about moving to or from channels. not changes inside of channels
