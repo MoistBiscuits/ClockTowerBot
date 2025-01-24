@@ -482,16 +482,14 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             
                 #Players field
                 embed.add_field(name="**Players**",value="",inline=False)
-                aliveRole = get(interaction.guild.roles, name=Role.alive.value)
-                deadRole = get(interaction.guild.roles, name=Role.dead.value)
                 if (len(self.gameState.players) > 0): #We have some players set
                     for i in range(0, len(self.gameState.players)):
-                        if (aliveRole in self.gameState.players[i].member.roles):
+                        if self.gameState.players[i].isAlive:
                             embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :bust_in_silhouette:",inline=False)
-                        elif (deadRole in self.gameState.players[i].member.roles):
-                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :skull:",inline=False)
+                        elif self.gameState.players[i].hasGhostVote:
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :skull::large_blue_diamond: ",inline=False)
                         else:
-                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}>",inline=False)
+                            embed.add_field(name=f"Player {i+1}: ",value=f"<@{self.gameState.players[i].member.id}> :skull:",inline=False)
                         
                 else: #No Players
                     embed.add_field(name="No players have been added",value="",inline=False)
