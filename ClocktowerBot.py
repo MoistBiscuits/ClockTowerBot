@@ -90,6 +90,8 @@ class GameState: #Class the holds the users set for the game
         self.playerChannelDict = {} #Dictionary to stores which players have which private room
         self.lockCooldown = 8 #How much time (in secs) it takes for a newly joined public room to lock
         self.openCooldown = 12 # How much time (in secs) a public room is open when a user runs the /open_door command
+        self.votingCircledownDelay = 3 # How much delay (in secs) the circle vote has between each players vote being counted
+        self.votingCountdownDelay = 10 # How much time (in secs) a countdown vote has until it ends
         self.gameDay = 1 #Determines which day the game is set,
         """
         dayphase : Current phase of the day, each "day" begins at night, game sarts at the first night followed by the first day
@@ -270,6 +272,7 @@ class ChannelLocks: #Holds the data on which discord channels auto deafen users 
 class CharacterData: #handles the reading of characters.xml and outputs character data
     def __init__(self,path: str):
         #XML parser
+        print(os.getcwd())
         self.tree = ET.parse(path) #Holds character lists for all the editions
         self.choices = self.getChoices()
         
@@ -1173,7 +1176,47 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
             print(e)
         finally:
             self.commandLock.release()
-        
+
+    class VoteView(discord.ui.View):
+        @discord.ui.button(label="Start Vote", style=discord.ButtonStyle.primary)
+        async def button_callback(self, interaction, button):
+            await interaction.response.send_message(content="whae",embed=None,view=None)
+
+    @app_commands.command(
+        name="run_vote",
+        description="Used by the storyteller to have players vote on an outcome, usually for an execution"
+    )
+    @app_commands.choices(type=[ 
+        app_commands.Choice(name=VotingType.circleTally.name, value=VotingType.circleTally.value),
+        app_commands.Choice(name=VotingType.countdownTally.name, value=VotingType.countdownTally.value),
+        app_commands.Choice(name=VotingType.blindCountdownTally.name, value=VotingType.blindCountdownTally.value),
+        app_commands.Choice(name=VotingType.pointCountdown.name, value=VotingType.pointCountdown.value),
+    ])
+    @app_commands.describe(nominator="The member to who nominated another player")
+    @app_commands.describe(nominee="The member who was nominated")
+    @app_commands.describe(type="The type of vote to use")
+    @app_commands.guild_only()
+    @app_commands.checks.has_role('ctb-StoryTeller')
+    async def runVote(self,interaction: discord.Interaction, nominator: discord.Member = None, nominee: discord.Member = None, type: int = 0):
+        #await interaction.response.defer(thinking=True,ephemeral=False)
+        await self.commandLock.acquire()
+
+        try:
+            nominatorStr = "Unknown"
+            nomineeStr = "Unknown"
+
+            if nominator != None:
+                nominatorStr = nominator.name
+
+            if nominee != None:
+                nomineeStr = nominee.name
+
+            await interaction.response.send_message(content=f"{nominatorStr} has nominated {nomineeStr}",view=GameCommands.VoteView())
+        except Exception as e:
+            print(e)
+        finally:
+            self.commandLock.release()
+    
     @app_commands.command(
         name="character",
         description="Prints information and rules on a given character role"
@@ -1300,7 +1343,8 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
     @openPublicRoomCommand.error
     @lockPublicRoomCommand.error
     @youAreTheCharacter.error
-    async def missingPermisionError(interaction: discord.Interaction,error):
+    @runVote.error
+    async def missingPermisionError(self,interaction: discord.Interaction,error: app_commands.AppCommandError):
         if isinstance(error, app_commands.checks.MissingPermissions):
             await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
         
@@ -1312,6 +1356,8 @@ class GameCommands(commands.Cog): #Cog that holds all the bots commands for runn
         
         elif isinstance(error, commands.MissingPermissions):
             await interaction.response.send_message(content="You don't have permission to use this command.",ephemeral=True)
+        else:
+            raise error
 
 #Give commands to the bot
 asyncio.run(bot.add_cog(GameCommands(bot)))
