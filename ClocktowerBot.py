@@ -45,9 +45,11 @@ class ChannelNames(Enum): #Names for set created discord channels and categories
 class VotingType(Enum): #Voting styles that may be used when a player nominates another player
     circleTally = 0 #Defualt voting method used in the official rules, player votes counted clockwise from nominee
     countdownTally = 1 #Players vote while being able to see other players, after countdown players votes are tallied,
-    #Used in place to circle tally if latency is bad or for specific characters ability (see Cult leader)
+    #Used in place to circle tally if latency is bad or for specific characters abilities (see Cultleader)
     blindCountdownTally = 2 #Players vote without being able to see other players, after countdown player votes are tallied,
-    #Used specifically for the Organ Grinders ability
+    #Used specifically for the Organ Grinders ability, which prevents players from seeing who votes who
+    pointCountdown = 3 #Players vote on a player publicly, after a countdown votes are tallied.
+    #Used specifically for the Boomdandies ability, who requires players pick a specific player to kill.
 
 class Player: #Class that holds the data on a player
     def __init__(self,member: discord.member):
